@@ -35,8 +35,9 @@ Limits the report to a resource group. When omitted, the script prompts for a
 resource group or all resource groups. RG is an alias for this parameter.
 
 .PARAMETER DaysAgo
-Number of days to include in the report. The default is 30 and the accepted
-range is 1 through 90.
+Number of days to include in the report. The default is 90 and the accepted
+range is 1 through 90. Azure Activity Log queries cannot start more than 90
+days in the past.
 
 .PARAMETER IncludeGuestUptime
 Retrieves Linux guest uptime through Azure Run Command. Requires a running VM,
@@ -72,7 +73,7 @@ param(
     [string]$ResourceGroupName,
 
     [ValidateRange(1, 90)]
-    [int]$DaysAgo = 30,
+    [int]$DaysAgo = 90,
 
     [switch]$IncludeGuestUptime
 )
@@ -331,7 +332,7 @@ foreach ($vm in $vms) {
         }
     }
 
-    $totalUptimeDisplay = "{0}h {1}m" -f [math]::Floor($totalDuration.TotalHours), [math]::Floor($totalDuration.TotalMinutes % 60)
+    $totalUptimeDisplay = Format-UptimeDuration -Duration $totalDuration
     if ($isWindowLimited) {
         $totalUptimeDisplay = "At least $totalUptimeDisplay (running when window began)"
     }
@@ -367,6 +368,6 @@ if ($IncludeGuestUptime) {
     $vmUptimeSummary | Select-Object VMName, ResourceGroup, GuestUptime | Format-Table -AutoSize
 }
 
-$totalUpTimeAllVMs = "{0}h {1}m" -f [math]::Floor($totalDurationAllVMs.TotalHours), [math]::Floor($totalDurationAllVMs.TotalMinutes % 60)
+$totalUpTimeAllVMs = Format-UptimeDuration -Duration $totalDurationAllVMs
 Write-Host "Total running time within the reporting window: $totalUpTimeAllVMs"
 Write-Host "Report generated on $($reportGeneratedUTC.ToString('u'))."

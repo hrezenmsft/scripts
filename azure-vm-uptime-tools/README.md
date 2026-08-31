@@ -71,7 +71,7 @@ Limit the report to a resource group:
 ```
 
 `-RG` is an alias for `-ResourceGroupName`. Supplying the parameter skips the
-interactive menu.
+interactive menu. `-DaysAgo` accepts 1 through 90; the summary default is 90.
 
 To add actual Linux guest uptime, retrieved with the read-only `cut -d. -f1 /proc/uptime`
 command through Azure Run Command:
@@ -118,7 +118,7 @@ Get-Help .\Export-AzVmUptimePeriods.ps1 -Full
 - The CSV exporter treats a first deallocate event as evidence that the VM was running when the window opened.
 - Restarts without deallocation are treated as continuous runtime.
 - Guest-initiated shutdowns might not create a matching deallocate event.
-- Azure Activity Log retention limits historical accuracy; the scripts accept at most 90 days.
+- Azure Activity Log queries cannot start more than 90 days in the past. For a year-long report, export Activity Logs to Log Analytics or a storage account before the 90-day retention window expires.
 - Large subscriptions may take time because Activity Log data is queried for each VM.
 
 These reports use management-plane events and are not SLA, billing, or guest operating system availability reports.
