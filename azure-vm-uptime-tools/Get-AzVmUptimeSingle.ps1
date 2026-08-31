@@ -14,12 +14,16 @@ possibility of such damages.
 
 <#
 .SYNOPSIS
-Reports estimated uptime for one Azure virtual machine.
+Reports Azure VM running time for one selected reporting window.
 
 .DESCRIPTION
 Calculates running periods and total uptime for a selected Azure VM using
 successful start and deallocate Activity Log events, VM creation time, and the
-current VM power state. All report timestamps are UTC.
+current VM power state. All report timestamps are UTC. A VM that was already
+running when the reporting window began is reported as having run for at least
+the window duration; Azure Activity Log data cannot determine its guest OS boot
+time. Use IncludeGuestUptime to retrieve Linux guest uptime through Azure Run
+Command.
 
 An active Azure CLI session is required. The script never runs az login; if the
 session is missing or expired, it stops and instructs the user to run az login.
@@ -36,6 +40,10 @@ parameter. When omitted, the script prompts for a value.
 Number of days to include in the report. The default is 30 and the accepted
 range is 1 through 90.
 
+.PARAMETER IncludeGuestUptime
+Retrieves Linux guest uptime through Azure Run Command. Requires a running VM,
+the Azure VM agent, and permission for Microsoft.Compute/virtualMachines/runCommand/action.
+
 .EXAMPLE
 .\Get-AzVmUptimeSingle.ps1 -VMName "example-vm" -ResourceGroupName "example-rg"
 
@@ -45,6 +53,11 @@ Reports the previous 30 days for example-vm.
 .\Get-AzVmUptimeSingle.ps1 -VM "example-vm" -RG "example-rg" -DaysAgo 7
 
 Reports the previous seven days for example-vm using parameter aliases.
+
+.EXAMPLE
+.\Get-AzVmUptimeSingle.ps1 -VM "example-vm" -RG "example-rg" -IncludeGuestUptime
+
+Reports the selected window and actual Linux guest uptime.
 
 .NOTES
 Author: Henrique Rezende
@@ -63,7 +76,9 @@ param(
     [string]$ResourceGroupName,
 
     [ValidateRange(1, 90)]
-    [int]$DaysAgo = 30
+    [int]$DaysAgo = 30,
+
+    [switch]$IncludeGuestUptime
 )
 
 while ([string]::IsNullOrWhiteSpace($vmName)) {
@@ -108,8 +123,72 @@ $queryEndUTC = $currentDateUTC
 $runningPeriods = @()
 $totalDuration = [TimeSpan]::Zero
 
+function Format-UptimeDuration {
+    param(
+        [Parameter(Mandatory)]
+        [TimeSpan]$Duration
+    )
+
+    if ($Duration.TotalDays -ge 1) {
+        return "{0}d {1}h {2}m" -f [math]::Floor($Duration.TotalDays), $Duration.Hours, $Duration.Minutes
+    }
+
+    return "{0}h {1}m" -f [math]::Floor($Duration.TotalHours), $Duration.Minutes
+}
+
+function Get-LinuxGuestUptime {
+    param(
+        [Parameter(Mandatory)]
+        [string]$ResourceGroupName,
+
+        [Parameter(Mandatory)]
+        [string]$VmName,
+
+        [Parameter(Mandatory)]
+        [string]$SubscriptionId
+    )
+
+    $uptimeSeconds = az vm run-command invoke --resource-group $ResourceGroupName --name $VmName --command-id RunShellScript --scripts 'cut -d. -f1 /proc/uptime' --subscription $SubscriptionId --query 'value[0].message' --output tsv --only-show-errors
+    if ($LASTEXITCODE -ne 0) {
+        return 'Unavailable (Run Command failed)'
+    }
+
+    $uptimeMessage = $uptimeSeconds -join [Environment]::NewLine
+    $uptimeMatch = [regex]::Match($uptimeMessage, '(?m)^\s*(?<seconds>\d+)(?:\.\d+)?\s*$')
+    if (-not $uptimeMatch.Success) {
+        return 'Unavailable (invalid guest response)'
+    }
+
+    $parsedUptimeSeconds = 0L
+    if (-not [long]::TryParse($uptimeMatch.Groups['seconds'].Value, [ref]$parsedUptimeSeconds) -or $parsedUptimeSeconds -lt 0) {
+        return 'Unavailable (invalid guest response)'
+    }
+
+    return Format-UptimeDuration -Duration ([TimeSpan]::FromSeconds($parsedUptimeSeconds))
+}
+
 # Determine the status of the VM
-$portalState = (Get-AzVM -ResourceGroupName $resourceGroupName -Name $vmName -Status).Statuses | Where-Object Code -match "PowerState" | Select-Object -ExpandProperty DisplayStatus
+$vm = Get-AzVM -ResourceGroupName $resourceGroupName -Name $vmName -Status
+$portalState = $vm.Statuses | Where-Object Code -match "PowerState" | Select-Object -ExpandProperty DisplayStatus
+
+$guestUptime = $null
+if ($IncludeGuestUptime) {
+    if ($portalState -ne 'VM running') {
+        $guestUptime = 'Unavailable (VM is not running)'
+    }
+    else {
+        $osType = az vm show --resource-group $resourceGroupName --name $vmName --subscription $subscriptionId --query 'storageProfile.osDisk.osType' --output tsv --only-show-errors
+        if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($osType)) {
+            $guestUptime = 'Unavailable (could not determine OS type)'
+        }
+        elseif ($osType -ne 'Linux') {
+            $guestUptime = 'Unavailable (Linux only)'
+        }
+        else {
+            $guestUptime = Get-LinuxGuestUptime -ResourceGroupName $resourceGroupName -VmName $vmName -SubscriptionId $subscriptionId
+        }
+    }
+}
 
 # Get the activity log for the VM
 $resourceId = "/subscriptions/$subscriptionId/resourceGroups/$resourceGroupName/providers/Microsoft.Compute/virtualMachines/$vmName"
@@ -167,6 +246,7 @@ $currentDateUTC = $currentDate.ToUniversalTime()
 # Initialize variables to track the running periods
 $running = $false
 $startTime = $null
+$isWindowLimited = $false
 
 if ($activityEvents) {
     # Loop through the events to determine the running periods
@@ -206,8 +286,9 @@ if ($activityEvents) {
     # If VM had no events and is currently deallocated, total running time in the period is 0.
     # If VM had no events and is currently RUNNING, total running time is the full period.
     if ($portalState -eq "VM Running") {
-        $duration = $currentDate - $startDate
+        $duration = $currentDateUTC - $startDateUTC
         $totalDuration += $duration
+        $isWindowLimited = $true
         # Add the running period to the list
         $runningPeriods += [PSCustomObject]@{
             StartTime = $startDateUTC.ToString("u")
@@ -218,12 +299,18 @@ if ($activityEvents) {
 }
 
 # Output the running periods for the VM
-Write-Host "Uptime report for VM '$vmName' in resource group '$resourceGroupName'" -ForegroundColor Yellow
+Write-Host "Uptime report for VM '$vmName' in resource group '$resourceGroupName' (last $DaysAgo days)" -ForegroundColor Yellow
 Write-Host "Queried period (UTC): $($startDateUTC.ToString('u')) to $($queryEndUTC.ToString('u'))"
 Write-Host "Running periods:" -ForegroundColor Yellow
 $runningPeriods | Format-Table -AutoSize
 
-# Output the total uptime for the VM
-$totalUptime = "{0}h {1}m" -f [math]::Floor($totalDuration.TotalHours), [math]::Floor($totalDuration.TotalMinutes % 60)
-Write-Host "Total Uptime for VM '$vmName': $totalUptime"
+# Output the total running time for the VM within the selected window.
+$totalUptime = Format-UptimeDuration -Duration $totalDuration
+if ($isWindowLimited) {
+    $totalUptime = "At least $totalUptime (running when window began)"
+}
+Write-Host "Total running time within the reporting window: $totalUptime"
+if ($IncludeGuestUptime) {
+    Write-Host "Linux guest uptime: $guestUptime"
+}
 Write-Host "Report generated on $currentDateUTC (UTC)."

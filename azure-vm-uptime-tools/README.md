@@ -49,6 +49,13 @@ Each script verifies the Azure CLI session and uses its access token to connect 
 
 `-VM` and `-RG` are aliases. If either name is omitted, the script prompts for it. `-DaysAgo` accepts 1 through 90.
 
+To add actual Linux guest uptime through the read-only `cut -d. -f1 /proc/uptime`
+command in Azure Run Command:
+
+```powershell
+.\Get-AzVmUptimeSingle.ps1 -VMName "example-vm" -ResourceGroupName "example-rg" -IncludeGuestUptime
+```
+
 ```powershell
 Get-Help .\Get-AzVmUptimeSingle.ps1 -Full
 ```
