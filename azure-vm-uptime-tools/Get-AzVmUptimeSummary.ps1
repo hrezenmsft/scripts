@@ -364,7 +364,7 @@ else {
     Write-Host "No running periods were detected."
 }
 
-Write-Host "VM uptime summary:" -ForegroundColor Yellow
+Write-Host "VM uptime summary (last $DaysAgo days):" -ForegroundColor Yellow
 $vmUptimeSummary | Format-Table -AutoSize
 
 if ($IncludeGuestUptime) {
