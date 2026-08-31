@@ -50,7 +50,7 @@ Reports the previous seven days for all VMs in example-rg.
 
 .NOTES
 Author: Henrique Rezende
-Version: 1.0.0
+Version: 1.0.1
 
 .LINK
 https://github.com/hrezenmsft/azure-vm-uptime-tools
