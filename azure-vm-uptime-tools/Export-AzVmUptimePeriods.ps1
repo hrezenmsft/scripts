@@ -55,7 +55,7 @@ Exports running periods and actual Linux guest uptime where available.
 
 .NOTES
 Author: Henrique Rezende
-Version: 1.0.0
+Version: 1.1.0
 
 .LINK
 https://github.com/hrezenmsft/azure-vm-uptime-tools
