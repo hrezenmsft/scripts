@@ -110,7 +110,13 @@ Choose the period and destination:
 .\Export-AzVmUptimePeriods.ps1 -DaysAgo 7 -OutputPath .\vm-uptime-periods.csv
 ```
 
-The CSV includes subscription, resource group, VM name, current power state, query boundaries, period boundaries, decimal duration values, and whether the period remained open at the query cutoff.
+To include actual Linux guest uptime in the CSV, use:
+
+```powershell
+.\Export-AzVmUptimePeriods.ps1 -IncludeGuestUptime
+```
+
+The CSV includes subscription, resource group, VM name, current power state, query boundaries, period boundaries, decimal duration values, and whether the period remained open at the query cutoff. The `GuestUptime` column is included only with `-IncludeGuestUptime`.
 
 ```powershell
 Get-Help .\Export-AzVmUptimePeriods.ps1 -Full

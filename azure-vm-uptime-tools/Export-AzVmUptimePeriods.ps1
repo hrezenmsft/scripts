@@ -21,6 +21,7 @@ Creates a CSV report of detected running periods for every VM in the active
 Azure subscription. The report uses successful start and deallocate Activity
 Log events, VM creation time, and current VM power state. All timestamps are
 UTC and the default lookback period is 30 days.
+Use IncludeGuestUptime to add Linux guest uptime through Azure Run Command.
 
 An active Azure CLI session is required. The script never runs az login; if the
 session is missing or expired, it stops and instructs the user to run az login.
@@ -33,6 +34,10 @@ range is 1 through 90.
 Path of the CSV file to create. When omitted, a timestamped file is created in
 the current directory.
 
+.PARAMETER IncludeGuestUptime
+Adds Linux guest uptime to the CSV through Azure Run Command. Requires a
+running VM, the Azure VM agent, and permission for Microsoft.Compute/virtualMachines/runCommand/action.
+
 .EXAMPLE
 .\Export-AzVmUptimePeriods.ps1
 
@@ -42,6 +47,11 @@ Exports the previous 30 days to a timestamped CSV file in the current directory.
 .\Export-AzVmUptimePeriods.ps1 -DaysAgo 7 -OutputPath .\uptime-periods.csv
 
 Exports the previous seven days to uptime-periods.csv.
+
+.EXAMPLE
+.\Export-AzVmUptimePeriods.ps1 -IncludeGuestUptime
+
+Exports running periods and actual Linux guest uptime where available.
 
 .NOTES
 Author: Henrique Rezende
@@ -56,7 +66,9 @@ param(
     [ValidateRange(1, 90)]
     [int]$DaysAgo = 30,
 
-    [string]$OutputPath
+    [string]$OutputPath,
+
+    [switch]$IncludeGuestUptime
 )
 
 if (-not (Get-Command az -ErrorAction SilentlyContinue)) {
@@ -108,6 +120,102 @@ $operationNames = @{
 $allRunningPeriods = @()
 $progress = 0
 
+function Format-UptimeDuration {
+    param(
+        [Parameter(Mandatory)]
+        [TimeSpan]$Duration
+    )
+
+    if ($Duration.TotalDays -ge 1) {
+        return "{0}d {1}h {2}m" -f [math]::Floor($Duration.TotalDays), $Duration.Hours, $Duration.Minutes
+    }
+
+    return "{0}h {1}m" -f [math]::Floor($Duration.TotalHours), $Duration.Minutes
+}
+
+function Get-LinuxGuestUptime {
+    param(
+        [Parameter(Mandatory)]
+        [string]$ResourceGroupName,
+
+        [Parameter(Mandatory)]
+        [string]$VmName,
+
+        [Parameter(Mandatory)]
+        [string]$SubscriptionId
+    )
+
+    $uptimeSeconds = az vm run-command invoke --resource-group $ResourceGroupName --name $VmName --command-id RunShellScript --scripts 'cut -d. -f1 /proc/uptime' --subscription $SubscriptionId --query 'value[0].message' --output tsv --only-show-errors
+    if ($LASTEXITCODE -ne 0) {
+        return 'Unavailable (Run Command failed)'
+    }
+
+    $uptimeMessage = $uptimeSeconds -join [Environment]::NewLine
+    $uptimeMatch = [regex]::Match($uptimeMessage, '(?m)^\s*(?<seconds>\d+)(?:\.\d+)?\s*$')
+    if (-not $uptimeMatch.Success) {
+        return 'Unavailable (invalid guest response)'
+    }
+
+    $parsedUptimeSeconds = 0L
+    if (-not [long]::TryParse($uptimeMatch.Groups['seconds'].Value, [ref]$parsedUptimeSeconds) -or $parsedUptimeSeconds -lt 0) {
+        return 'Unavailable (invalid guest response)'
+    }
+
+    return Format-UptimeDuration -Duration ([TimeSpan]::FromSeconds($parsedUptimeSeconds))
+}
+
+function New-UptimePeriodEntry {
+    param(
+        [Parameter(Mandatory)]
+        [string]$SubscriptionId,
+
+        [Parameter(Mandatory)]
+        [string]$ResourceGroupName,
+
+        [Parameter(Mandatory)]
+        [string]$VmName,
+
+        [string]$CurrentPowerState,
+
+        [Parameter(Mandatory)]
+        [DateTime]$QueryStartUTC,
+
+        [Parameter(Mandatory)]
+        [DateTime]$QueryEndUTC,
+
+        [Parameter(Mandatory)]
+        [DateTime]$PeriodStartUTC,
+
+        [Parameter(Mandatory)]
+        [DateTime]$PeriodEndUTC,
+
+        [Parameter(Mandatory)]
+        [bool]$IsOpenPeriod,
+
+        [string]$GuestUptime
+    )
+
+    $duration = $PeriodEndUTC - $PeriodStartUTC
+    $entry = [PSCustomObject]@{
+        SubscriptionId = $SubscriptionId
+        ResourceGroupName = $ResourceGroupName
+        VMName = $VmName
+        CurrentPowerState = $CurrentPowerState
+        QueryStartUTC = $QueryStartUTC.ToString("o")
+        QueryEndUTC = $QueryEndUTC.ToString("o")
+        PeriodStartUTC = $PeriodStartUTC.ToString("o")
+        PeriodEndUTC = $PeriodEndUTC.ToString("o")
+        DurationHours = [math]::Round($duration.TotalHours, 2)
+        DurationMinutes = [math]::Round($duration.TotalMinutes, 2)
+        IsOpenPeriod = $IsOpenPeriod
+    }
+    if ($IncludeGuestUptime) {
+        $entry | Add-Member -MemberType NoteProperty -Name GuestUptime -Value $GuestUptime
+    }
+
+    return $entry
+}
+
 foreach ($vm in $vms) {
     $progress++
     $vmName = $vm.Name
@@ -117,6 +225,25 @@ foreach ($vm in $vms) {
     $portalState = $vm.Statuses | Where-Object Code -match "PowerState" | Select-Object -ExpandProperty DisplayStatus
     if ([string]::IsNullOrWhiteSpace($portalState) -and $vm.PowerState) {
         $portalState = $vm.PowerState
+    }
+
+    $guestUptime = $null
+    if ($IncludeGuestUptime) {
+        if ($portalState -ne 'VM running') {
+            $guestUptime = 'Unavailable (VM is not running)'
+        }
+        else {
+            $osType = az vm show --resource-group $resourceGroupName --name $vmName --subscription $subscriptionId --query 'storageProfile.osDisk.osType' --output tsv --only-show-errors
+            if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($osType)) {
+                $guestUptime = 'Unavailable (could not determine OS type)'
+            }
+            elseif ($osType -ne 'Linux') {
+                $guestUptime = 'Unavailable (Linux only)'
+            }
+            else {
+                $guestUptime = Get-LinuxGuestUptime -ResourceGroupName $resourceGroupName -VmName $vmName -SubscriptionId $subscriptionId
+            }
+        }
     }
 
     $activityLogJson = az monitor activity-log list --resource-id $vm.Id --start-time $queryStartUTC.ToString("yyyy-MM-ddTHH:mm:ssZ") --end-time $queryEndUTC.ToString("yyyy-MM-ddTHH:mm:ssZ") --max-events 1000 --subscription $subscriptionId --output json --only-show-errors
@@ -178,53 +305,17 @@ foreach ($vm in $vms) {
             $running = $false
             $endTime = $activityEvent.EventTimestamp
             $duration = $endTime - $startTime
-            $allRunningPeriods += [PSCustomObject]@{
-                SubscriptionId = $subscriptionId
-                ResourceGroupName = $resourceGroupName
-                VMName = $vmName
-                CurrentPowerState = $portalState
-                QueryStartUTC = $queryStartUTC.ToString("o")
-                QueryEndUTC = $queryEndUTC.ToString("o")
-                PeriodStartUTC = $startTime.ToString("o")
-                PeriodEndUTC = $endTime.ToString("o")
-                DurationHours = [math]::Round($duration.TotalHours, 2)
-                DurationMinutes = [math]::Round($duration.TotalMinutes, 2)
-                IsOpenPeriod = $false
-            }
+            $allRunningPeriods += New-UptimePeriodEntry -SubscriptionId $subscriptionId -ResourceGroupName $resourceGroupName -VmName $vmName -CurrentPowerState $portalState -QueryStartUTC $queryStartUTC -QueryEndUTC $queryEndUTC -PeriodStartUTC $startTime -PeriodEndUTC $endTime -IsOpenPeriod $false -GuestUptime $guestUptime
         }
     }
 
     if ($running -and $startTime) {
         $duration = $queryEndUTC - $startTime
-        $allRunningPeriods += [PSCustomObject]@{
-            SubscriptionId = $subscriptionId
-            ResourceGroupName = $resourceGroupName
-            VMName = $vmName
-            CurrentPowerState = $portalState
-            QueryStartUTC = $queryStartUTC.ToString("o")
-            QueryEndUTC = $queryEndUTC.ToString("o")
-            PeriodStartUTC = $startTime.ToString("o")
-            PeriodEndUTC = $queryEndUTC.ToString("o")
-            DurationHours = [math]::Round($duration.TotalHours, 2)
-            DurationMinutes = [math]::Round($duration.TotalMinutes, 2)
-            IsOpenPeriod = $true
-        }
+        $allRunningPeriods += New-UptimePeriodEntry -SubscriptionId $subscriptionId -ResourceGroupName $resourceGroupName -VmName $vmName -CurrentPowerState $portalState -QueryStartUTC $queryStartUTC -QueryEndUTC $queryEndUTC -PeriodStartUTC $startTime -PeriodEndUTC $queryEndUTC -IsOpenPeriod $true -GuestUptime $guestUptime
     }
     elseif ($activityEvents.Count -eq 0 -and $portalState -eq "VM Running") {
         $duration = $queryEndUTC - $queryStartUTC
-        $allRunningPeriods += [PSCustomObject]@{
-            SubscriptionId = $subscriptionId
-            ResourceGroupName = $resourceGroupName
-            VMName = $vmName
-            CurrentPowerState = $portalState
-            QueryStartUTC = $queryStartUTC.ToString("o")
-            QueryEndUTC = $queryEndUTC.ToString("o")
-            PeriodStartUTC = $queryStartUTC.ToString("o")
-            PeriodEndUTC = $queryEndUTC.ToString("o")
-            DurationHours = [math]::Round($duration.TotalHours, 2)
-            DurationMinutes = [math]::Round($duration.TotalMinutes, 2)
-            IsOpenPeriod = $true
-        }
+        $allRunningPeriods += New-UptimePeriodEntry -SubscriptionId $subscriptionId -ResourceGroupName $resourceGroupName -VmName $vmName -CurrentPowerState $portalState -QueryStartUTC $queryStartUTC -QueryEndUTC $queryEndUTC -PeriodStartUTC $queryStartUTC -PeriodEndUTC $queryEndUTC -IsOpenPeriod $true -GuestUptime $guestUptime
     }
 }
 
@@ -246,6 +337,9 @@ else {
         DurationHours = ""
         DurationMinutes = ""
         IsOpenPeriod = ""
+    }
+    if ($IncludeGuestUptime) {
+        $emptyReportTemplate | Add-Member -MemberType NoteProperty -Name GuestUptime -Value ""
     }
     $emptyReportTemplate | ConvertTo-Csv -NoTypeInformation | Select-Object -First 1 | Set-Content -LiteralPath $resolvedOutputPath -Encoding UTF8
 }
