@@ -1,4 +1,4 @@
-# Scripts
+# scripts
 
 PowerShell script collection organized by topic. Each folder contains the scripts, requirements, examples, and notes that previously lived in its own standalone repository.
 
@@ -15,8 +15,8 @@ PowerShell script collection organized by topic. Each folder contains the script
 Clone the repository and move into the folder for the tool you want to run:
 
 ```powershell
-git clone https://github.com/hrezenmsft/Scripts.git
-Set-Location Scripts
+git clone https://github.com/hrezenmsft/scripts.git
+Set-Location scripts
 Set-Location .\azure-vm-lifecycle-tools
 ```
 

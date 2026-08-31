@@ -26,8 +26,8 @@ All scripts support `-WhatIf` and confirmation prompts because they create resou
 - Permission to create the Azure resources used by the selected operation.
 
 ```powershell
-git clone https://github.com/hrezenmsft/Scripts.git
-Set-Location .\Scripts\azure-vm-lifecycle-tools
+git clone https://github.com/hrezenmsft/scripts.git
+Set-Location .\scripts\azure-vm-lifecycle-tools
 az login
 az account set --subscription "<subscription-name-or-id>"
 ```

@@ -27,8 +27,8 @@ The built-in Azure `Reader` role normally provides the required permissions. A c
 
 ```powershell
 Install-Module Az.Accounts, Az.Compute -Scope CurrentUser
-git clone https://github.com/hrezenmsft/Scripts.git
-Set-Location .\Scripts\azure-vm-uptime-tools
+git clone https://github.com/hrezenmsft/scripts.git
+Set-Location .\scripts\azure-vm-uptime-tools
 ```
 
 Install Azure CLI using the [official installation instructions](https://learn.microsoft.com/cli/azure/install-azure-cli). Sign in and select the subscription to report on:
