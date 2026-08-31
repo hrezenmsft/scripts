@@ -29,6 +29,7 @@ Number of samples to collect. Zero means run until interrupted. The default is z
 
 .NOTES
 Author: Henrique Rezende
+Version: 1.0.0
 
 .LINK
 https://github.com/hrezenmsft/windows-network-diagnostic-tools

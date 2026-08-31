@@ -45,6 +45,7 @@ Exports the previous seven days to uptime-periods.csv.
 
 .NOTES
 Author: Henrique Rezende
+Version: 1.0.0
 
 .LINK
 https://github.com/hrezenmsft/azure-vm-uptime-tools

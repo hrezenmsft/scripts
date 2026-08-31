@@ -90,6 +90,7 @@ Checks Azure and guest decryption state, then shows the destructive migration op
 
 .NOTES
 Author: Henrique Rezende
+Version: 1.0.0
 
 .LINK
 https://github.com/hrezenmsft/azure-vm-lifecycle-tools

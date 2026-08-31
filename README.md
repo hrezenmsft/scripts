@@ -22,6 +22,18 @@ Set-Location .\azure-vm-lifecycle-tools
 
 Review the README in each script folder before running a script. The folders keep their own requirements, examples, troubleshooting notes, and security considerations.
 
+## Individual script versions
+
+Every script declares its version in the `.NOTES` help section. On a push to `main`, GitHub Actions increments the version of each changed script using the commit message with the highest release impact:
+
+| Commit prefix | Version change |
+| --- | --- |
+| `fix:` | Patch, for example `1.0.0` to `1.0.1` |
+| `feat:` | Minor, for example `1.0.0` to `1.1.0` |
+| `feat!:` or `BREAKING CHANGE:` | Major, for example `1.0.0` to `2.0.0` |
+
+Use a `fix:`, `feat:`, or breaking-change commit whenever a PowerShell script changes. The workflow commits the resulting version updates with `[skip script-version]` to prevent a second bump.
+
 ## Disclaimer
 
 The sample scripts are not supported under any Microsoft standard support program or service. They are provided AS IS without warranty of any kind. The entire risk arising from their use or performance remains with you.

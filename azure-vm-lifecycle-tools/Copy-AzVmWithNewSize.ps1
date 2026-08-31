@@ -88,6 +88,7 @@ prompts for the final clone's local administrator credentials.
 
 .NOTES
 Author: Henrique Rezende
+Version: 1.0.0
 
 .LINK
 https://github.com/hrezenmsft/azure-vm-lifecycle-tools

@@ -27,6 +27,7 @@ Optional CSV destination path.
 
 .NOTES
 Author: Henrique Rezende
+Version: 1.0.0
 
 .LINK
 https://github.com/hrezenmsft/windows-network-diagnostic-tools

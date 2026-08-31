@@ -78,6 +78,7 @@ confirmation. High priority has additional cost.
 
 .NOTES
 Author: Henrique Rezende
+Version: 1.0.0
 
 The client must be permitted by the storage account firewall, virtual network
 rules, or private endpoint configuration. Owner and Contributor management

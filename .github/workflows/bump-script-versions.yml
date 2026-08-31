@@ -1,0 +1,54 @@
+name: Bump changed script versions
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - '**.ps1'
+
+permissions:
+  contents: write
+
+jobs:
+  bump-versions:
+    if: github.actor != 'github-actions[bot]' && !contains(github.event.head_commit.message, '[skip script-version]')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - id: bump
+        name: Determine version increment
+        shell: bash
+        run: |
+          messages="$(git log --format=%B "${{ github.event.before }}..${{ github.sha }}")"
+          if grep -Eqi 'BREAKING CHANGE:|^[[:alnum:]]+(\([^)]*\))?!:' <<< "$messages"; then
+            echo 'level=major' >> "$GITHUB_OUTPUT"
+          elif grep -Eqi '^feat(\([^)]*\))?:' <<< "$messages"; then
+            echo 'level=minor' >> "$GITHUB_OUTPUT"
+          else
+            echo 'level=patch' >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Update changed script versions
+        shell: pwsh
+        env:
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
+          BUMP: ${{ steps.bump.outputs.level }}
+        run: |
+          $changedScripts = git diff --name-only $env:BEFORE $env:AFTER -- '*.ps1'
+          if ($changedScripts) {
+            ./tools/Update-ScriptVersions.ps1 -Path $changedScripts -Bump $env:BUMP
+          }
+
+      - name: Commit version updates
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -- '*.ps1'
+          git diff --cached --quiet || git commit -m 'chore: bump changed script versions [skip script-version]'
+          git push

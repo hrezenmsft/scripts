@@ -48,6 +48,7 @@ Reports the previous seven days for example-vm using parameter aliases.
 
 .NOTES
 Author: Henrique Rezende
+Version: 1.0.0
 
 .LINK
 https://github.com/hrezenmsft/azure-vm-uptime-tools

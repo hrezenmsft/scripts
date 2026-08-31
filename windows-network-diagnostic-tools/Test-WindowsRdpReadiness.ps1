@@ -31,6 +31,10 @@ Returns all result objects to the pipeline.
 
 .EXAMPLE
 .\Test-WindowsRdpReadiness.ps1 -OfflineWindowsPath F:\Windows
+
+.NOTES
+Author: Henrique Rezende
+Version: 1.0.0
 #>
 
 [CmdletBinding()]

@@ -51,6 +51,7 @@ Prompts with menus to select resource group and VM, with manual entry options.
 
 .NOTES
 Author: Henrique Rezende
+Version: 1.0.0
 #>
 
 [CmdletBinding(SupportsShouldProcess, ConfirmImpact = "High")]

@@ -64,6 +64,7 @@ used when omitted.
 
 .NOTES
 Author: Henrique Rezende
+Version: 1.0.0
 
 .LINK
 https://github.com/hrezenmsft/azure-vm-lifecycle-tools
