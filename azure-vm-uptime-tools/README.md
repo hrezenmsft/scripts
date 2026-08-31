@@ -20,6 +20,7 @@ PowerShell tools for estimating Azure VM uptime from successful start and deallo
 - Azure CLI 2.x.
 - Az PowerShell modules: `Az.Accounts` and `Az.Compute`.
 - Permission to read VMs and subscription Activity Log events.
+- For `-IncludeGuestUptime`, permission for `Microsoft.Compute/virtualMachines/runCommand/action` and a running Linux VM with the Azure VM agent.
 
 The built-in Azure `Reader` role normally provides the required permissions. A custom role must allow `Microsoft.Compute/virtualMachines/read` and `Microsoft.Insights/eventtypes/values/read`.
 
@@ -72,6 +73,18 @@ Limit the report to a resource group:
 `-RG` is an alias for `-ResourceGroupName`. Supplying the parameter skips the
 interactive menu.
 
+To add actual Linux guest uptime, retrieved with the read-only `cut -d. -f1 /proc/uptime`
+command through Azure Run Command:
+
+```powershell
+.\Get-AzVmUptimeSummary.ps1 -ResourceGroupName "example-rg" -IncludeGuestUptime
+```
+
+`TotalUptime` remains the management-plane running time within the selected
+window. `GuestUptime` reports the OS boot-based uptime for supported running
+Linux VMs. It is unavailable for stopped VMs, Windows VMs, or VMs where Run
+Command cannot execute.
+
 ```powershell
 Get-Help .\Get-AzVmUptimeSummary.ps1 -Full
 ```
@@ -101,6 +114,7 @@ Get-Help .\Export-AzVmUptimePeriods.ps1 -Full
 - Only successful start and deallocate operations are counted.
 - VM creation within the reporting window is treated as an initial start.
 - A running VM with no matching events is treated as running for the full window.
+- `-IncludeGuestUptime` reads Linux `/proc/uptime` through Azure Run Command and can report the actual guest OS uptime.
 - The CSV exporter treats a first deallocate event as evidence that the VM was running when the window opened.
 - Restarts without deallocation are treated as continuous runtime.
 - Guest-initiated shutdowns might not create a matching deallocate event.
