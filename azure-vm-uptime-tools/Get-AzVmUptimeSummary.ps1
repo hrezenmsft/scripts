@@ -337,13 +337,17 @@ foreach ($vm in $vms) {
         $totalUptimeDisplay = "At least $totalUptimeDisplay (running when window began)"
     }
 
-    $vmUptimeSummary += [PSCustomObject]@{
+    $summaryEntry = [PSCustomObject]@{
         VMName = $vmName
         ResourceGroup = $vmResourceGroupName
         Status = $portalState
         TotalUptime = $totalUptimeDisplay
-        GuestUptime = $guestUptime
     }
+    if ($IncludeGuestUptime) {
+        $summaryEntry | Add-Member -MemberType NoteProperty -Name GuestUptime -Value $guestUptime
+    }
+
+    $vmUptimeSummary += $summaryEntry
     $totalDurationAllVMs += $totalDuration
 }
 
