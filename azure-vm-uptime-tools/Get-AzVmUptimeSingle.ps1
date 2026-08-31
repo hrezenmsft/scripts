@@ -61,7 +61,7 @@ Reports the selected window and actual Linux guest uptime.
 
 .NOTES
 Author: Henrique Rezende
-Version: 1.0.0
+Version: 1.1.0
 
 .LINK
 https://github.com/hrezenmsft/azure-vm-uptime-tools
