@@ -14,14 +14,17 @@ possibility of such damages.
 
 <#
 .SYNOPSIS
-Reports estimated uptime for Azure virtual machines.
+Reports Azure VM running time within a selected reporting window.
 
 .DESCRIPTION
 Calculates running periods and total uptime for every VM in a selected resource
 group or for every VM in the active Azure subscription. When no resource group
 is provided, the script prompts for a resource group or all resource groups.
 The report uses successful start and deallocate Activity Log events, VM creation
-time, and current VM power state. All timestamps are UTC.
+time, and current VM power state. All timestamps are UTC. A VM that was already
+running when the reporting window began is reported as having run for at least
+the window duration; Azure Activity Log data cannot determine its guest OS boot
+time.
 
 An active Azure CLI session is required. The script never runs az login; if the
 session is missing or expired, it stops and instructs the user to run az login.
@@ -201,6 +204,7 @@ foreach ($vm in $vms) {
     $reportCutoffUTC = (Get-Date).ToUniversalTime()
     $runningPeriods = @()
     $totalDuration = [TimeSpan]::Zero
+    $isWindowLimited = $false
     $running = $false
     $startTime = $null
 
@@ -240,6 +244,7 @@ foreach ($vm in $vms) {
     elseif ($portalState -eq "VM Running") {
         $duration = $reportCutoffUTC - $startDateUTC
         $totalDuration += $duration
+        $isWindowLimited = $true
         $runningPeriods += [PSCustomObject]@{
             StartTime = $startDateUTC.ToString("u")
             EndTime = "Currently Running"
@@ -257,11 +262,16 @@ foreach ($vm in $vms) {
         }
     }
 
+    $totalUptimeDisplay = "{0}h {1}m" -f [math]::Floor($totalDuration.TotalHours), [math]::Floor($totalDuration.TotalMinutes % 60)
+    if ($isWindowLimited) {
+        $totalUptimeDisplay = "At least $totalUptimeDisplay (running when window began)"
+    }
+
     $vmUptimeSummary += [PSCustomObject]@{
         VMName = $vmName
         ResourceGroup = $vmResourceGroupName
         Status = $portalState
-        TotalUptime = "{0}h {1}m" -f [math]::Floor($totalDuration.TotalHours), [math]::Floor($totalDuration.TotalMinutes % 60)
+        TotalUptime = $totalUptimeDisplay
     }
     $totalDurationAllVMs += $totalDuration
 }
@@ -283,5 +293,5 @@ Write-Host "VM uptime summary:" -ForegroundColor Yellow
 $vmUptimeSummary | Format-Table -AutoSize
 
 $totalUpTimeAllVMs = "{0}h {1}m" -f [math]::Floor($totalDurationAllVMs.TotalHours), [math]::Floor($totalDurationAllVMs.TotalMinutes % 60)
-Write-Host "Total Uptime for all VMs: $totalUpTimeAllVMs"
+Write-Host "Total running time within the reporting window: $totalUpTimeAllVMs"
 Write-Host "Report generated on $($reportGeneratedUTC.ToString('u'))."
