@@ -21,8 +21,8 @@ PowerShell tools for Windows RDP diagnostics, Active Directory TCP reachability 
 - Administrator privileges are recommended for complete registry, firewall, certificate, event log, and process information.
 
 ```powershell
-git clone https://github.com/hrezenmsft/my-scripts.git
-Set-Location .\my-scripts\windows-network-diagnostic-tools
+git clone https://github.com/hrezenmsft/Scripts.git
+Set-Location .\Scripts\windows-network-diagnostic-tools
 ```
 
 ## Diagnose Windows RDP readiness
