@@ -60,7 +60,7 @@ Adds actual Linux guest uptime to the per-VM summary.
 
 .NOTES
 Author: Henrique Rezende
-Version: 1.0.1
+Version: 1.1.0
 
 .LINK
 https://github.com/hrezenmsft/azure-vm-uptime-tools
