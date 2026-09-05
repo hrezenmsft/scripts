@@ -16,6 +16,9 @@ PowerShell tools for Azure VM lifecycle operations and archived blob rehydration
 | `Convert-AzVmAdeToEncryptionAtHost.ps1` | Prepare and migrate supported Azure Disk Encryption VMs to encryption at host. |
 | `Get-AzVmPlacementInventory.ps1` | Inventory VM placement by name, region, and zonal/regional state (including zone values). |
 | `Start-AzBlobRehydration.ps1` | Rehydrate archived blobs to the Hot or Cool access tier. |
+| `Copy-AzManagedDisk.ps1` | Copy one or more managed disks across regions, resource groups, or subscriptions. |
+| `Move-AzVmToRegion.ps1` | Create a deallocated copy of a VM in another region without changing the source VM. |
+| `Rename-AzVmResources.ps1` | Rename a VM resource or selected attached managed disks. |
 
 All scripts support `-WhatIf` and confirmation prompts because they create resources or submit billable operations.
 
@@ -456,6 +459,69 @@ Specialized clones receive an OS disk copied from the shared source snapshot. Ge
 
 ```powershell
 Get-Help .\Copy-AzVmWithNewSize.ps1 -Full
+```
+
+## Copy managed disks
+
+`Copy-AzManagedDisk.ps1` copies selected managed disks by creating temporary incremental snapshots, copying snapshots to the target region, and creating target managed disks. It supports interactive selection of a VM and its attached disks, including `A` for all attached disks, and it can target another subscription or resource group.
+
+The script requires an Azure CLI MFA-backed session. It checks the access token for an MFA claim, offers device-code reauthentication when needed, and uses one confirmation for the complete plan. Target regions must support managed snapshots. Temporary source and target snapshots are deleted after every copy attempt.
+
+```powershell
+.\Copy-AzManagedDisk.ps1 `
+    -SourceResourceGroupName source-rg `
+    -SourceDiskName app01-osdisk,app01-data01 `
+    -TargetResourceGroupName target-rg `
+    -TargetRegion brazilsouth
+```
+
+Azure validates target disk and snapshot SKU availability during creation. If Azure rejects a SKU or target region, no target disk is created for that copy attempt.
+
+```powershell
+Get-Help .\Copy-AzManagedDisk.ps1 -Full
+```
+
+## Move a VM to another region
+
+`Move-AzVmToRegion.ps1` creates a copy of a selected VM in another region without changing the source VM. It copies the OS disk and, optionally, all data disks through temporary snapshots; recreates NICs in user-selected target VNet and subnet; recreates public IP resources; and leaves the target VM deallocated.
+
+It preserves static private IP addresses where available, offers dynamic addressing when they are unavailable, preserves NIC IP forwarding, accelerated networking, custom DNS servers, VM tags, and managed boot diagnostics. New public IP addresses differ from the source and are included in the final summary. When no target VM name is supplied, a random five-character suffix is used consistently for target VM, disk, and NIC names.
+
+```powershell
+.\Move-AzVmToRegion.ps1 `
+    -SourceResourceGroupName source-rg `
+    -SourceVmName app01 `
+    -TargetResourceGroupName target-rg `
+    -TargetRegion brazilsouth `
+    -TargetVnetName target-vnet `
+    -TargetSubnetName default `
+    -IncludeDataDisks
+```
+
+The script blocks or warns about configurations it cannot safely reproduce, including zonal VMs, availability sets, dedicated hosts, proximity placement groups, marketplace plans, extensions, managed identities, and NIC network security groups. Temporary snapshots are deleted after each disk copy.
+
+```powershell
+Get-Help .\Move-AzVmToRegion.ps1 -Full
+```
+
+## Rename VM resources
+
+`Rename-AzVmResources.ps1` operates on a selected VM and offers two exclusive modes: rename the VM resource while retaining its disks, or rename selected attached OS/data disks while retaining the VM name. Both modes deallocate the VM and restore its original running state afterward.
+
+Disk-only mode lets you select individual disks, ranges, or all attached disks. It swaps a selected OS disk in place. For each selected data disk, it attaches the replacement at the original LUN with its original caching setting, verifies that Azure reports the expected LUN mapping, and only then deletes the original disk. The VM resource is not deleted in disk-only mode.
+
+```powershell
+.\Rename-AzVmResources.ps1 `
+    -ResourceGroupName app-rg `
+    -VmName app01 `
+    -RenameDisks `
+    -DiskName app01-osdisk,app01-data01
+```
+
+VM-resource rename deletes and recreates only the VM resource after setting disks and NICs to `Detach`. Data disks are attached in the VM creation action before the VM is started. The script removes unattached replacement disks created during a failed disk rename.
+
+```powershell
+Get-Help .\Rename-AzVmResources.ps1 -Full
 ```
 
 ## Inventory VM placement
