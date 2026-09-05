@@ -82,7 +82,7 @@ Shows the operations that would run without changing any resource.
 
 .NOTES
 Author: Henrique Rezende
-Version: 1.0.0
+Version: 1.0.1
 
 .LINK
 https://github.com/hrezenmsft/scripts

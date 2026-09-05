@@ -58,7 +58,7 @@ Tenant used in the Azure CLI MFA sign-in hint.
 
 .NOTES
 Author: Henrique Rezende
-Version: 1.0.0
+Version: 1.0.1
 
 .LINK
 https://github.com/hrezenmsft/scripts
