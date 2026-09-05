@@ -282,7 +282,11 @@ try {
             if ($null -eq $targetSubnet) { throw "Target subnet '$TargetSubnetName' was not found in VNet '$($targetVnet.name)'." }
         }
         else {
-            $targetSubnet = Select-MenuItem "Choose target subnet for NIC '$($sourceNic.name)'" $subnets { param($item) "$($item.name) ($($item.addressPrefix))" }
+            $targetSubnet = Select-MenuItem "Choose target subnet for NIC '$($sourceNic.name)'" $subnets {
+                param($item)
+                $prefix = if ($item.PSObject.Properties.Match("addressPrefixes").Count -gt 0) { $item.addressPrefixes -join ', ' } else { $item.addressPrefix }
+                "$($item.name) ($prefix)"
+            }
         }
         $ipPlans = @()
         foreach ($sourceIpConfig in @($sourceNic.ipConfigurations)) {
@@ -354,7 +358,7 @@ try {
             $vmArguments += "--tags"
             foreach ($property in $sourceVm.tags.psobject.Properties) { $vmArguments += "$($property.Name)=$($property.Value)" }
         }
-        $targetVm = Invoke-AzJson @vmArguments
+        Invoke-AzJson @vmArguments | Out-Null
         $bootDiagnosticsEnabled = $sourceVm.PSObject.Properties.Match("diagnosticsProfile").Count -gt 0 -and
             $null -ne $sourceVm.diagnosticsProfile -and
             $null -ne $sourceVm.diagnosticsProfile.bootDiagnostics -and
