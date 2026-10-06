@@ -19,7 +19,7 @@ Optional resource group to inventory.
 Inventories VMs across all resource groups in the active subscription.
 
 .PARAMETER SubscriptionId
-Optional Azure subscription name or ID.
+Optional Azure subscription name or ID. If omitted, the script prompts for it at startup; press Enter to keep the current Azure CLI subscription.
 
 .PARAMETER TenantId
 Optional Microsoft Entra tenant ID used in az login guidance.
@@ -38,6 +38,11 @@ Inventories only resource group rg-prod.
 .\Get-AzVmPlacementInventory.ps1 -AllResourceGroups
 
 Inventories VMs across all resource groups in the active subscription.
+
+.EXAMPLE
+.\Get-AzVmPlacementInventory.ps1 -SubscriptionId 00000000-0000-0000-0000-000000000000 -AllResourceGroups
+
+Skips the subscription prompt and inventories all resource groups in the given subscription.
 
 .NOTES
 Author: Henrique Rezende
@@ -152,6 +157,27 @@ function Select-AzResourceGroupName {
     }
 }
 
+function Read-AzSubscriptionId {
+    $current = $null
+    $currentJson = az account show --output json --only-show-errors 2>$null
+    if ($LASTEXITCODE -eq 0 -and $currentJson) {
+        $current = $currentJson | ConvertFrom-Json
+    }
+
+    Write-Host ""
+    if ($current) {
+        Write-Host "Current Azure CLI subscription: $($current.name) [$($current.id)]" -ForegroundColor Cyan
+    }
+
+    while ($true) {
+        $prompt = if ($current) { "Enter subscription ID or name (press Enter to keep current)" } else { "Enter subscription ID or name" }
+        $value = (Read-Host $prompt).Trim()
+        if (-not [string]::IsNullOrWhiteSpace($value)) { return $value }
+        if ($current) { return $current.id }
+        Write-Warning "Subscription ID or name cannot be empty."
+    }
+}
+
 function Get-VmPlacementInventoryRow {
     param(
         [Parameter(Mandatory)]
@@ -196,6 +222,10 @@ $null = & az @tokenCheckArguments 2>$null
 if ($LASTEXITCODE -ne 0) {
     $loginCommand = if ([string]::IsNullOrWhiteSpace($TenantId)) { "az login" } else { "az login --tenant `"$TenantId`"" }
     throw "No valid Azure CLI session was found. Run '$loginCommand', select the required subscription, and run this script again."
+}
+
+if ([string]::IsNullOrWhiteSpace($SubscriptionId)) {
+    $SubscriptionId = Read-AzSubscriptionId
 }
 
 if (-not [string]::IsNullOrWhiteSpace($SubscriptionId)) {
