@@ -94,7 +94,7 @@ Analyzes a large subscription with 20 VMs processed in parallel and no backup lo
 
 .NOTES
 Author: Henrique Rezende
-Version: 1.5.0
+Version: 1.5.1
 Requires: Az.Accounts, Az.Compute, Az.Resources. Optional: Az.RecoveryServices, Azure CLI.
 Minimum role: Reader on the subscription (Key Vault and Backup data is read through ARM only).
 
