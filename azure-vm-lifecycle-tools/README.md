@@ -4,7 +4,7 @@
 
 The sample scripts are not supported under any Microsoft standard support program or service. They are provided AS IS without warranty of any kind. The entire risk arising from their use or performance remains with you.
 
-PowerShell tools for Azure VM lifecycle operations and archived blob rehydration.
+PowerShell tools for Azure VM lifecycle operations, Azure Disk Encryption migration planning, and archived blob rehydration.
 
 ## Choose a tool
 
@@ -13,6 +13,7 @@ PowerShell tools for Azure VM lifecycle operations and archived blob rehydration
 | `Import-AzVhdToManagedDisk.ps1` | Upload a local fixed-size VHD or VHDX into a new Azure managed disk. |
 | `Copy-AzVmWithNewSize.ps1` | Clone selected VMs in a resource group using a different VM size. |
 | `Convert-AzZonalVmToRegional.ps1` | Replace a zonal VM with a regional VM by recreating its managed disks without zones and reusing its NICs. |
+| `Get-AzAdeMigrationPlan.ps1` | Analyze a subscription (read-only) and generate an HTML migration plan, with an optional CSV, for moving VMs from ADE to encryption at host. |
 | `Convert-AzVmAdeToEncryptionAtHost.ps1` | Prepare and migrate supported Azure Disk Encryption VMs to encryption at host. |
 | `Get-AzVmPlacementInventory.ps1` | Inventory VM placement by name, region, and zonal/regional state (including zone values). |
 | `Start-AzBlobRehydration.ps1` | Rehydrate archived blobs to the Hot or Cool access tier. |
@@ -20,7 +21,7 @@ PowerShell tools for Azure VM lifecycle operations and archived blob rehydration
 | `Move-AzVmToRegion.ps1` | Create a deallocated copy of a VM in another region without changing the source VM. |
 | `Rename-AzVmResources.ps1` | Rename a VM resource or selected attached managed disks. |
 
-All scripts support `-WhatIf` and confirmation prompts because they create resources or submit billable operations.
+All scripts that create resources or submit billable operations support `-WhatIf` and confirmation prompts. `Get-AzAdeMigrationPlan.ps1` is read-only, so it has no `-WhatIf` switch.
 
 ## Shared requirements
 
@@ -35,7 +36,7 @@ az login
 az account set --subscription "<subscription-name-or-id>"
 ```
 
-Every script verifies the Azure CLI session before doing work. If the session is missing or expired, the script stops and instructs you to run `az login`; no script starts Azure CLI authentication automatically. For multi-tenant accounts, use `az login --tenant "<tenant-id>"` before selecting the subscription.
+Every script verifies the Azure CLI session before doing work. If the session is missing or expired, the script stops and instructs you to run `az login`; no script starts Azure CLI authentication automatically. For multi-tenant accounts, use `az login --tenant "<tenant-id>"` before selecting the subscription. `Get-AzAdeMigrationPlan.ps1` also accepts an existing Az PowerShell session from `Connect-AzAccount`, and likewise never starts an interactive sign-in.
 
 ## Import a VHD or VHDX
 
@@ -265,9 +266,134 @@ Preview cloning every VM in a resource group:
 .\Copy-AzVmWithNewSize.ps1 -ResourceGroupName lab-rg -TargetVmSize Standard_D4s_v5 -WhatIf
 ```
 
+## Plan an Azure Disk Encryption to encryption at host migration
+
+`Get-AzAdeMigrationPlan.ps1` scans every VM in a subscription and builds a migration plan for moving from Azure Disk Encryption (ADE) to encryption at host, following [Migrate from Azure Disk Encryption to encryption at host](https://learn.microsoft.com/azure/virtual-machines/disk-encryption-migrate). It sorts each VM into a migration path, lists blockers and warnings, gives step-by-step instructions for each path, and estimates the effort. Use it to scope the migration before Azure Disk Encryption retires on September 15, 2028.
+
+The script is **read-only**. It never changes VMs, disks, Key Vaults, extensions, feature registrations, or backup settings.
+
+### Additional requirements
+
+- PowerShell 7 is recommended for faster parallel analysis; Windows PowerShell 5.1 also works.
+- Required modules: `Az.Accounts`, `Az.Compute`, and `Az.Resources`.
+- Optional: `Az.RecoveryServices`, to detect Azure Backup protection.
+- **Reader** on the subscription or on each analyzed resource group. Backup detection also needs read access to the Recovery Services vaults.
+- An existing Azure CLI (`az login`) or Az PowerShell (`Connect-AzAccount`) session.
+
+```powershell
+Install-Module Az.Accounts, Az.Compute, Az.Resources, Az.RecoveryServices -Scope CurrentUser
+
+# Option 1: Azure CLI
+az login --tenant "<tenant-id>"
+
+# Option 2: Az PowerShell
+Connect-AzAccount -Tenant "<tenant-id>"
+```
+
+### Generate a plan
+
+The script reads VMs, power states, managed disks, and VM size capabilities in bulk, then checks each VM in parallel for extensions, ADE status, and backup protection. It writes a self-contained HTML report. By default the report includes only VMs that use ADE or already use encryption at host.
+
+```powershell
+.\Get-AzAdeMigrationPlan.ps1 -SubscriptionId "00000000-0000-0000-0000-000000000000"
+```
+
+The report is saved in the current folder as `AdeMigrationPlan-<subscription>-<timestamp>.html`. Each analyzed VM is also written to the pipeline as an object.
+
+Limit the scope and export a CSV:
+
+```powershell
+.\Get-AzAdeMigrationPlan.ps1 `
+    -SubscriptionId "00000000-0000-0000-0000-000000000000" `
+    -ResourceGroupName "rg-app01", "rg-app02" `
+    -OutputPath .\reports `
+    -CsvPath .\reports\ade-plan.csv `
+    -ThrottleLimit 15 `
+    -CopyThroughputMBps 150
+```
+
+List VMs that are blocked:
+
+```powershell
+.\Get-AzAdeMigrationPlan.ps1 -SubscriptionId "<subscription-id>" |
+    Where-Object { -not $_.Supported } |
+    Select-Object VmName, ResourceGroup, MigrationPathName, Blockers
+```
+
+| Parameter | Description |
+| --- | --- |
+| `-SubscriptionId` | Required. The subscription to analyze. |
+| `-TenantId` | Optional. Used only in the sign-in hint shown when no session is found. |
+| `-ResourceGroupName` | Optional. Limits the analysis to one or more resource groups. |
+| `-OutputPath` | Optional. HTML file path or existing folder. |
+| `-CsvPath` | Optional. Also exports one CSV row per VM. |
+| `-IncludeNonAdeVms` | Also lists VMs that don't use ADE. |
+| `-SkipBackupCheck` | Skips the Azure Backup protection check. |
+| `-CopyThroughputMBps` | Assumed disk copy speed for effort estimates. Range 10–2000; default 200. |
+| `-ThrottleLimit` | Number of VMs analyzed in parallel. Range 1–50; default 10. |
+
+```powershell
+Get-Help .\Get-AzAdeMigrationPlan.ps1 -Full
+```
+
+### Report contents
+
+The HTML report has a clickable table of contents with these sections:
+
+1. Executive summary: VM counts, paths, blockers, total effort.
+2. Background on ADE retirement and encryption at host.
+3. Prerequisites: feature registration, VM size support, backups, and maintenance windows.
+4. Migration paths overview.
+5. Detailed step-by-step instructions for each path.
+6. VMs grouped by migration path.
+7. Blockers and warnings.
+8. Post-migration cleanup.
+9. Optional automation guidance, including `Convert-AzVmAdeToEncryptionAtHost.ps1`.
+10. Planning and effort estimates.
+11. Appendix and references.
+
+### Migration paths
+
+| Path | When it applies | Overhead hours |
+| --- | --- | --- |
+| Windows – OS disk only | Windows VM with only the OS volume encrypted | 2 |
+| Windows – OS and data disks | Windows VM with OS and data volumes encrypted | 3 |
+| Linux – data disks only | Linux VM with only data volumes encrypted | 3 |
+| Linux – OS disk rebuild | Linux VM with an encrypted OS disk. ADE can't be disabled, so the VM must be rebuilt. | 8 |
+| AVD session host | Azure Virtual Desktop session host; redeploy or reimage instead | 4 |
+| Manual review | Unsupported or unknown states, such as encryption in progress or failed extensions | 4 |
+| Already encryption at host | No ADE and encryption at host already enabled | 0 |
+| No ADE | Not encrypted with ADE (shown only with `-IncludeNonAdeVms`) | 0 |
+
+Calculation notes:
+
+- Estimated effort per VM = disk copy time (total disk GiB at `-CopyThroughputMBps`) + the overhead hours for its path. Figures are for planning only; actual times depend on disk type, region, and workload.
+- Overhead covers validation, downtime coordination, and post-migration checks. It doesn't include application testing or change-approval lead time.
+- VM size support comes from the `EncryptionAtHostSupported` SKU capability in the VM's region.
+- The script reports the subscription-level `Microsoft.Compute/EncryptionAtHost` feature registration state as a prerequisite.
+- VMs with ADE status `EncryptionInProgress`, a failed extension, or an unknown encrypted scope go to **Manual review**. Resolve these before planning their migration.
+- The script doesn't validate application compatibility, OS-level settings, or Key Vault access policies beyond listing the Key Vaults it references.
+
+### Troubleshooting
+
+No Azure session found: sign in with `az login` or `Connect-AzAccount`, then run the script again.
+
+The backup check shows a warning: the `Microsoft.RecoveryServices` provider may not be registered in the subscription. In that case, no VM in that subscription is protected by Azure Backup.
+
+```powershell
+Get-AzResourceProvider -ProviderNamespace Microsoft.RecoveryServices |
+    Select-Object ProviderNamespace, RegistrationState
+```
+
+HTTP 429 (throttling) or timeouts in large subscriptions: lower the parallelism, or analyze one resource group at a time.
+
+```powershell
+.\Get-AzAdeMigrationPlan.ps1 -SubscriptionId "<subscription-id>" -ThrottleLimit 4
+```
+
 ## Migrate Azure Disk Encryption to encryption at host
 
-`Convert-AzVmAdeToEncryptionAtHost.ps1` prepares and migrates supported VMs from Azure Disk Encryption (ADE) to encryption at host. Migration is intentionally split into two runs: `Prepare` starts guest decryption, and `Migrate` verifies decryption before replacing affected disks and the VM resource.
+`Convert-AzVmAdeToEncryptionAtHost.ps1` prepares and migrates supported VMs from Azure Disk Encryption (ADE) to encryption at host. Migration is intentionally split into two runs: `Prepare` starts guest decryption, and `Migrate` verifies decryption before replacing affected disks and the VM resource. Run `Get-AzAdeMigrationPlan.ps1` first to identify which VMs are supported and which path each one needs.
 
 ### Additional requirements
 
@@ -564,6 +690,7 @@ Get-Help .\Get-AzVmPlacementInventory.ps1 -Full
 - Generalized Windows cloning requests a local administrator credential through `Get-Credential`; the credential remains in process memory and is passed to Azure deployment without being written to disk by the script.
 - Avoid verbose or transcript logging when debugging token-bearing commands.
 - Review all cloned resources before deleting or changing a source VM.
+- `Get-AzAdeMigrationPlan.ps1` HTML and CSV outputs contain VM, resource group, region, and Key Vault names plus encryption settings. Treat them as sensitive and delete them when planning is done.
 
 ## Author
 

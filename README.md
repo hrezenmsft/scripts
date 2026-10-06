@@ -6,7 +6,7 @@ PowerShell script collection organized by topic. Each folder contains the script
 
 | Folder | Contents |
 | --- | --- |
-| [azure-vm-lifecycle-tools](azure-vm-lifecycle-tools/) | Azure VM lifecycle operations, VHD import, VM clone and conversion helpers, placement inventory, and archived blob rehydration. |
+| [azure-vm-lifecycle-tools](azure-vm-lifecycle-tools/) | Azure VM lifecycle operations, VHD import, VM clone and conversion helpers, placement inventory, Azure Disk Encryption migration planning, and archived blob rehydration. |
 | [azure-vm-uptime-tools](azure-vm-uptime-tools/) | Azure VM uptime reporting and CSV export tools based on Activity Log events and VM power state. |
 | [windows-network-diagnostic-tools](windows-network-diagnostic-tools/) | Windows RDP readiness, Active Directory connectivity, and TCP/UDP endpoint monitoring tools. |
 
