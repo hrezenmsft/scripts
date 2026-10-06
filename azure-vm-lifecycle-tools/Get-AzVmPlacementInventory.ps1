@@ -184,7 +184,7 @@ foreach ($commandName in @(
     }
 }
 
-if (-not [string]::IsNullOrWhiteSpace($ResourceGroupName) -and $AllResourceGroups.IsPresent) {
+if (-not [string]::IsNullOrWhiteSpace($ResourceGroupName) -and [bool]$AllResourceGroups) {
     throw "Specify either -ResourceGroupName or -AllResourceGroups, not both."
 }
 
@@ -219,7 +219,7 @@ Connect-AzAccount -AccessToken $accessToken -AccountId $azAccount.user.name -Ten
 
 $script:ActiveAzureSubscriptionLabel = "$($azAccount.name) [$($azAccount.id)]"
 
-if ([string]::IsNullOrWhiteSpace($ResourceGroupName) -and -not $AllResourceGroups.IsPresent) {
+if ([string]::IsNullOrWhiteSpace($ResourceGroupName) -and -not [bool]$AllResourceGroups) {
     $scopeChoice = Select-MenuItem -Title "Choose inventory scope" -Items @(
         [PSCustomObject]@{ Label = "One resource group"; Value = "Single" }
         [PSCustomObject]@{ Label = "All resource groups"; Value = "All" }
@@ -234,7 +234,7 @@ if ([string]::IsNullOrWhiteSpace($ResourceGroupName) -and -not $AllResourceGroup
 }
 
 $targetResourceGroups = @()
-if ($AllResourceGroups.IsPresent) {
+if ([bool]$AllResourceGroups) {
     $targetResourceGroups = @(Get-AzResourceGroup -ErrorAction Stop | Sort-Object ResourceGroupName | Select-Object -ExpandProperty ResourceGroupName)
 }
 else {
@@ -278,7 +278,7 @@ if ($sortedInventory.Count -eq 0) {
 Write-Host ""
 Write-Host "VM placement inventory" -ForegroundColor Green
 Write-Host "Subscription: $script:ActiveAzureSubscriptionLabel"
-if ($AllResourceGroups.IsPresent) {
+if ([bool]$AllResourceGroups) {
     Write-Host "Scope: All resource groups"
 }
 else {
