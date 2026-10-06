@@ -300,7 +300,7 @@ The script reads VMs, power states, managed disks, and VM size capabilities in b
 
 The report is saved in the current folder as `AdeMigrationPlan-<subscriptionName>-<resourceGroup|AllRGs>-<yyyyMMdd-HHmmss>.html` (UTC time). When several resource groups are selected, their names are joined with `_`, or shortened to `<n>RGs` if the name gets too long.
 
-The analysis results go only to the report. The console shows the resource group picker and, at the end, the report path (and the CSV path, if you asked for one). Add `-Verbose` to see progress messages. Add `-PassThru` to also return one object per analyzed VM to the pipeline.
+The analysis results go only to the report. The console shows the resource group picker and, at the end, the report path (and the CSV path, if you asked for one). While the scan runs, a progress bar shows the current phase (reading VMs, disks, backup status, classifying, building the report) with per-resource-group, per-region and per-VM detail, so large subscriptions don't look stalled. Add `-Verbose` to see progress messages. Add `-PassThru` to also return one object per analyzed VM to the pipeline.
 
 If you don't pass `-ResourceGroupName` or `-AllResourceGroups`, the script shows the top 10 resource groups by VM count and asks which to scan. You can:
 

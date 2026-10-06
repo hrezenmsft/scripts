@@ -244,7 +244,18 @@ $timestamp = $startTime.ToString("yyyyMMdd-HHmmss")
 $results = New-Object System.Collections.Generic.List[object]
 $failures = New-Object System.Collections.Generic.List[object]
 
+$progressActivity = "ADE migration plan"
+$showPhase = {
+    param([string]$Status, [int]$Percent)
+    Write-Progress -Id 1 -Activity $progressActivity -Status $Status -PercentComplete ([Math]::Min(100, [Math]::Max(0, $Percent)))
+}
+$clearProgress = {
+    Write-Progress -Id 2 -ParentId 1 -Activity "Details" -Completed
+    Write-Progress -Id 1 -Activity $progressActivity -Completed
+}
+
 try {
+    & $showPhase "Signing in to Azure" 2
     #region Sign-in (reuse existing Azure CLI or Az PowerShell session; never starts an interactive login)
     $loginHint = if ($TenantId) { "az login --tenant $TenantId" } else { "az login" }
     $usedCli = $false
@@ -278,6 +289,7 @@ try {
 
     #region Subscription-level data
     Write-Verbose "Reading subscription '$subscriptionName' ($SubscriptionId)..."
+    & $showPhase "Reading subscription settings" 3
 
     $featureState = "Unknown"
     try {
@@ -303,6 +315,7 @@ try {
     elseif (-not $AllResourceGroups.IsPresent) {
         # Console redirection flags are unreliable in hosts such as VS Code, so the picker always tries
         # to prompt and only falls back to ALL when the host genuinely cannot read input.
+        & $clearProgress
         $readAnswer = {
             param($prompt)
             try { $value = Read-Host $prompt }
@@ -428,10 +441,15 @@ try {
     $csvFile = $null
     if ($CsvPath) { $csvFile = Resolve-OutputFilePath -Path $CsvPath -DefaultFileName "$baseName.csv" }
 
+    & $showPhase "Reading VMs and power state" 5
     $vms = @()
     $vmStatusById = @{}
     if ($ResourceGroupName) {
+        $rgIndex = 0
+        $rgTotal = @($ResourceGroupName).Count
         foreach ($rg in $ResourceGroupName) {
+            $rgIndex++
+            Write-Progress -Id 2 -ParentId 1 -Activity "Reading resource groups" -Status "$rgIndex of ${rgTotal}: $rg" -PercentComplete ([int](($rgIndex - 1) / $rgTotal * 100))
             $vms += @(Get-AzVM -ResourceGroupName $rg -ErrorAction Stop)
             foreach ($s in @(Get-AzVM -ResourceGroupName $rg -Status -ErrorAction Stop)) { $vmStatusById[$s.Id.ToLowerInvariant()] = $s }
         }
@@ -440,10 +458,13 @@ try {
         $vms = @(Get-AzVM -ErrorAction Stop)
         foreach ($s in @(Get-AzVM -Status -ErrorAction Stop)) { $vmStatusById[$s.Id.ToLowerInvariant()] = $s }
     }
+    Write-Progress -Id 2 -ParentId 1 -Activity "Reading resource groups" -Completed
 
+    & $showPhase ("Reading managed disks ({0} VM(s) found)" -f $vms.Count) 15
     $diskById = @{}
     foreach ($d in @(Get-AzDisk -ErrorAction Stop)) { $diskById[$d.Id.ToLowerInvariant()] = $d }
 
+    & $showPhase "Checking Azure Backup availability" 20
     $backupAvailable = (-not $SkipBackupCheck) -and [bool](Get-Command -Name Get-AzRecoveryServicesBackupStatus -ErrorAction SilentlyContinue)
     $backupProviderMissing = $false
     if (-not $SkipBackupCheck -and -not $backupAvailable) {
@@ -462,10 +483,16 @@ try {
     #endregion Subscription-level data
 
     #region Parallel per-VM collection (read-only)
-    foreach ($location in @($vms | ForEach-Object { $_.Location } | Sort-Object -Unique)) {
+    & $showPhase "Reading VM size capabilities" 25
+    $locations = @($vms | ForEach-Object { $_.Location } | Sort-Object -Unique)
+    $locIndex = 0
+    foreach ($location in $locations) {
+        $locIndex++
         Write-Verbose "Reading VM size capabilities for '$location'..."
+        Write-Progress -Id 2 -ParentId 1 -Activity "Reading VM size capabilities" -Status "Region $locIndex of $($locations.Count): $location" -PercentComplete ([int](($locIndex - 1) / $locations.Count * 100))
         $null = Get-EahSizeSupport -Location $location -VmSize "none"
     }
+    Write-Progress -Id 2 -ParentId 1 -Activity "Reading VM size capabilities" -Completed
 
     $workerScript = {
         param([string]$ResourceGroup, [string]$VmName, [string]$VmId, $AzContext, [bool]$CheckBackup)
@@ -534,7 +561,8 @@ try {
         $done = 0
         foreach ($job in $jobs) {
             $percent = if ($jobs.Count) { [int](($done / $jobs.Count) * 100) } else { 100 }
-            Write-Progress -Activity "Analyzing VMs ($ThrottleLimit in parallel)" -Status "$done of $($jobs.Count) complete" -PercentComplete $percent
+            & $showPhase ("Collecting VM details ({0} of {1})" -f $done, $jobs.Count) (30 + [int](40 * $percent / 100))
+            Write-Progress -Id 2 -ParentId 1 -Activity "Analyzing VMs ($ThrottleLimit in parallel)" -Status "$done of $($jobs.Count) complete - waiting for $($job.Vm.Name)" -PercentComplete $percent
             try {
                 $out = @($job.PowerShell.EndInvoke($job.Handle))
                 if ($out.Count -gt 0 -and $out[-1] -is [System.Collections.IDictionary]) { $collected[$job.Vm.Id.ToLowerInvariant()] = $out[-1] }
@@ -546,7 +574,7 @@ try {
             finally { $job.PowerShell.Dispose() }
             $done++
         }
-        Write-Progress -Activity "Analyzing VMs ($ThrottleLimit in parallel)" -Completed
+        Write-Progress -Id 2 -ParentId 1 -Activity "Analyzing VMs ($ThrottleLimit in parallel)" -Completed
     }
     finally {
         $pool.Close()
@@ -561,7 +589,12 @@ try {
     }
     $adeTypes = @("AzureDiskEncryption", "AzureDiskEncryptionForLinux")
 
+    $classifyIndex = 0
     foreach ($vm in $vms) {
+        $classifyIndex++
+        $classifyPercent = [int](($classifyIndex - 1) / [Math]::Max(1, $vms.Count) * 100)
+        & $showPhase "Classifying migration paths" (70 + [int](15 * $classifyPercent / 100))
+        Write-Progress -Id 2 -ParentId 1 -Activity "Classifying VMs" -Status "VM $classifyIndex of $($vms.Count): $($vm.Name)" -PercentComplete $classifyPercent
         $id = $vm.Id.ToLowerInvariant()
         $data = $collected[$id]
         $osType = [string]$vm.StorageProfile.OsDisk.OsType
@@ -683,6 +716,7 @@ try {
                 AnalyzedUtc          = (Get-Date).ToUniversalTime().ToString("o")
             })
     }
+    Write-Progress -Id 2 -ParentId 1 -Activity "Classifying VMs" -Completed
     #endregion Classification
 
     #region Migration path catalog (steps based on the Microsoft Learn article)
@@ -763,6 +797,7 @@ New-AzVM -ResourceGroupName "<rg>" -Location "<location>" -VM $vmCfg
 
     #region Build HTML report
     Write-Verbose "Building report..."
+    & $showPhase "Building HTML report" 88
 
     $pathCounts = [ordered]@{}
     foreach ($key in $pathCatalog.Keys) {
@@ -1118,6 +1153,7 @@ ol.steps>li{margin-bottom:14px}
     Add-Html "<div class='footer'>Generated by Get-AzAdeMigrationPlan.ps1 on $($startTime.ToString('yyyy-MM-dd HH:mm')) UTC. This report is read-only analysis; no Azure resources were changed. Always validate the plan against the current Microsoft Learn documentation before migrating.</div>"
     Add-Html "</main></body></html>"
 
+    & $showPhase "Writing report files" 97
     Set-Content -Path $reportFile -Value $sb.ToString() -Encoding UTF8
 
     if ($csvFile) {
@@ -1151,6 +1187,7 @@ ol.steps>li{margin-bottom:14px}
         } | Export-Csv -Path $csvFile -NoTypeInformation -Encoding UTF8
     }
 
+& $clearProgress
 Write-Host ("ADE migration plan report: {0}" -f $reportFile) -ForegroundColor Green
 if ($csvFile) { Write-Host ("CSV export: {0}" -f $csvFile) -ForegroundColor Green }
 
@@ -1159,5 +1196,6 @@ if ($PassThru) {
 }
 }
 catch {
+    & $clearProgress
     throw "ADE migration analysis failed: $($_.Exception.Message)"
 }
