@@ -46,7 +46,7 @@ Skips the subscription prompt and inventories all resource groups in the given s
 
 .NOTES
 Author: Henrique Rezende
-Version: 1.0.1
+Version: 1.0.2
 #>
 
 [CmdletBinding()]
