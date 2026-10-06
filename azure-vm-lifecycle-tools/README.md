@@ -298,7 +298,9 @@ The script reads VMs, power states, managed disks, and VM size capabilities in b
 .\Get-AzAdeMigrationPlan.ps1 -SubscriptionId "00000000-0000-0000-0000-000000000000"
 ```
 
-The report is saved in the current folder as `AdeMigrationPlan-<subscriptionName>-<resourceGroup|AllRGs>-<yyyyMMdd-HHmmss>.html` (UTC time). When several resource groups are selected, their names are joined with `_`, or shortened to `<n>RGs` if the name gets too long. Each analyzed VM is also written to the pipeline as an object.
+The report is saved in the current folder as `AdeMigrationPlan-<subscriptionName>-<resourceGroup|AllRGs>-<yyyyMMdd-HHmmss>.html` (UTC time). When several resource groups are selected, their names are joined with `_`, or shortened to `<n>RGs` if the name gets too long.
+
+The analysis results go only to the report. The console shows the resource group picker and, at the end, the report path (and the CSV path, if you asked for one). Add `-Verbose` to see progress messages. Add `-PassThru` to also return one object per analyzed VM to the pipeline.
 
 If you don't pass `-ResourceGroupName` or `-AllResourceGroups`, the script shows the top 10 resource groups by VM count and asks which to scan. You can:
 
@@ -307,10 +309,7 @@ If you don't pass `-ResourceGroupName` or `-AllResourceGroups`, the script shows
 - Type part of a name to search, then choose from the matches.
 - Enter `A` to scan ALL resource groups.
 
-The picker always appears when no resource group parameter is passed. For automation, pass `-AllResourceGroups` or `-ResourceGroupName` to skip it. If the host can't read input, the script prints a warning and scans ALL resource groups.
-
-In a non-interactive session, it scans all resource groups.
-
+The picker always appears when no resource group parameter is passed. For automation, pass `-AllResourceGroups` or `-ResourceGroupName` to skip it. If the host can't read input (for example, in a non-interactive session), the script prints a warning and scans ALL resource groups.
 Scan every resource group without the prompt:
 
 ```powershell
@@ -332,7 +331,7 @@ Limit the scope and export a CSV:
 List VMs that are blocked:
 
 ```powershell
-.\Get-AzAdeMigrationPlan.ps1 -SubscriptionId "<subscription-id>" -AllResourceGroups |
+.\Get-AzAdeMigrationPlan.ps1 -SubscriptionId "<subscription-id>" -AllResourceGroups -PassThru |
     Where-Object { -not $_.Supported } |
     Select-Object VmName, ResourceGroup, MigrationPathName, Blockers
 ```
@@ -348,6 +347,7 @@ List VMs that are blocked:
 | `-IncludeNonAdeVms` | Also lists VMs that don't use ADE. |
 | `-SkipBackupCheck` | Skips the Azure Backup protection check. |
 | `-CopyThroughputMBps` | Assumed disk copy speed for effort estimates. Range 10–2000; default 200. |
+| `-PassThru` | Also returns one result object per analyzed VM to the pipeline. By default, results go only to the report. |
 | `-ThrottleLimit` | Number of VMs analyzed in parallel. Range 1–50; default 10. |
 
 ```powershell

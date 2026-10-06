@@ -61,6 +61,10 @@ Assumed AzCopy disk copy throughput in MB/s used for the copy time estimate. Def
 Maximum number of VMs analyzed in parallel (runspace pool). Default: 10. Raise it for large subscriptions;
 lower it if you see Azure Resource Manager throttling (HTTP 429) warnings.
 
+.PARAMETER PassThru
+Also returns the per-VM result objects to the pipeline. By default the script writes nothing but the report
+path(s) to the console; use -Verbose to see progress messages.
+
 .EXAMPLE
 .\Get-AzAdeMigrationPlan.ps1 -SubscriptionId 00000000-0000-0000-0000-000000000000
 
@@ -78,7 +82,7 @@ Analyzes the whole subscription without prompting.
 Analyzes two resource groups and writes both an HTML report and a CSV file.
 
 .EXAMPLE
-$plan = .\Get-AzAdeMigrationPlan.ps1 -SubscriptionId 00000000-0000-0000-0000-000000000000 -AllResourceGroups -SkipBackupCheck
+$plan = .\Get-AzAdeMigrationPlan.ps1 -SubscriptionId 00000000-0000-0000-0000-000000000000 -AllResourceGroups -SkipBackupCheck -PassThru
 $plan | Where-Object MigrationPath -like 'Windows*' | Format-Table VmName, ResourceGroup, EffortHours
 
 Captures the per-VM objects for further filtering.
@@ -90,7 +94,7 @@ Analyzes a large subscription with 20 VMs processed in parallel and no backup lo
 
 .NOTES
 Author: Henrique Rezende
-Version: 1.4.2
+Version: 1.5.0
 Requires: Az.Accounts, Az.Compute, Az.Resources. Optional: Az.RecoveryServices, Azure CLI.
 Minimum role: Reader on the subscription (Key Vault and Backup data is read through ARM only).
 
@@ -124,12 +128,14 @@ param(
     [int]$CopyThroughputMBps = 200,
 
     [ValidateRange(1, 50)]
-    [int]$ThrottleLimit = 10
+    [int]$ThrottleLimit = 10,
+
+    [switch]$PassThru
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
-Write-Host "Get-AzAdeMigrationPlan v1.4.1" -ForegroundColor Cyan
+Write-Verbose "Get-AzAdeMigrationPlan v1.5.0"
 
 $requiredCommands = @(
     "Get-AzContext", "Set-AzContext", "Connect-AzAccount",
@@ -246,7 +252,7 @@ try {
         $tokenArguments = @("account", "get-access-token", "--output", "none", "--subscription", $SubscriptionId)
         $null = & az @tokenArguments 2>$null
         if ($LASTEXITCODE -eq 0) {
-            Write-Host "Using the existing Azure CLI session." -ForegroundColor DarkGray
+            Write-Verbose "Using the existing Azure CLI session."
             $null = & az account set --subscription $SubscriptionId
             $account = (& az account show -o json) | ConvertFrom-Json
             $accessToken = & az account get-access-token --subscription $account.id --query accessToken -o tsv
@@ -262,7 +268,7 @@ try {
         if (-not $context.Subscription -or $context.Subscription.Id -ne $SubscriptionId) {
             Set-AzContext -Subscription $SubscriptionId -ErrorAction Stop | Out-Null
         }
-        Write-Host "Using the existing Az PowerShell session." -ForegroundColor DarkGray
+        Write-Verbose "Using the existing Az PowerShell session."
     }
     $context = Get-AzContext
     $subscriptionName = $context.Subscription.Name
@@ -271,7 +277,7 @@ try {
     #endregion Sign-in
 
     #region Subscription-level data
-    Write-Host "Reading subscription '$subscriptionName' ($SubscriptionId)..." -ForegroundColor Cyan
+    Write-Verbose "Reading subscription '$subscriptionName' ($SubscriptionId)..."
 
     $featureState = "Unknown"
     try {
@@ -281,12 +287,12 @@ try {
     catch { Write-Warning "Could not read the EncryptionAtHost feature state: $($_.Exception.Message)" }
 
     #region Resource group scope
-    $allResourceGroups = @(Get-AzResourceGroup -ErrorAction Stop | Sort-Object -Property ResourceGroupName)
+    $rgList = @(Get-AzResourceGroup -ErrorAction Stop | Sort-Object -Property ResourceGroupName)
     if ($ResourceGroupName) {
         $validated = @()
         $unknown = @()
         foreach ($rgName in $ResourceGroupName) {
-            $match = $allResourceGroups | Where-Object { $_.ResourceGroupName -ieq $rgName } | Select-Object -First 1
+            $match = $rgList | Where-Object { $_.ResourceGroupName -ieq $rgName } | Select-Object -First 1
             if ($match) { $validated += $match.ResourceGroupName } else { $unknown += $rgName }
         }
         if ($unknown.Count -gt 0) {
@@ -294,7 +300,7 @@ try {
         }
         $ResourceGroupName = @($validated | Select-Object -Unique)
     }
-    elseif (-not $AllResourceGroups) {
+    elseif (-not $AllResourceGroups.IsPresent) {
         # Console redirection flags are unreliable in hosts such as VS Code, so the picker always tries
         # to prompt and only falls back to ALL when the host genuinely cannot read input.
         $readAnswer = {
@@ -304,7 +310,7 @@ try {
             if ($null -eq $value) { throw [System.OperationCanceledException]::new('NoInteractiveInput') }
             return $value
         }
-        if ($allResourceGroups.Count -eq 0) {
+        if ($rgList.Count -eq 0) {
             Write-Warning "No resource groups were found in subscription '$subscriptionName'."
         }
         else {
@@ -316,7 +322,7 @@ try {
             $totalVms = [int](($vmCountByRg.Values | Measure-Object -Sum).Sum)
             $rgCount = { param($rg) [int]$vmCountByRg[$rg.ResourceGroupName.ToLowerInvariant()] }
             # Resource groups with the most VMs first, so the most relevant ones appear in the first page.
-            $rankedGroups = @($allResourceGroups | Sort-Object -Property @{ Expression = { & $rgCount $_ }; Descending = $true }, ResourceGroupName)
+            $rankedGroups = @($rgList | Sort-Object -Property @{ Expression = { & $rgCount $_ }; Descending = $true }, ResourceGroupName)
             $pageSize = 10
 
             $showList = {
@@ -324,7 +330,7 @@ try {
                 $page = @($groups | Select-Object -Skip $offset -First $pageSize)
                 Write-Host ""
                 Write-Host $title -ForegroundColor Cyan
-                Write-Host ("  {0,3}  {1}  ({2} VMs in {3} resource groups)" -f "A", "ALL resource groups", $totalVms, $allResourceGroups.Count) -ForegroundColor Yellow
+                Write-Host ("  {0,3}  {1}  ({2} VMs in {3} resource groups)" -f "A", "ALL resource groups", $totalVms, $rgList.Count) -ForegroundColor Yellow
                 for ($i = 0; $i -lt $page.Count; $i++) {
                     Write-Host ("  {0,3}  {1}  ({2} VMs, {3})" -f ($i + 1), $page[$i].ResourceGroupName, (& $rgCount $page[$i]), $page[$i].Location)
                 }
@@ -361,7 +367,7 @@ try {
                         $picked += $currentPage[$number - 1].ResourceGroupName
                         continue
                     }
-                    $match = $allResourceGroups | Where-Object { $_.ResourceGroupName -ieq $token } | Select-Object -First 1
+                    $match = $rgList | Where-Object { $_.ResourceGroupName -ieq $token } | Select-Object -First 1
                     if ($match) { $picked += $match.ResourceGroupName } else { $invalid += $token }
                 }
 
@@ -395,10 +401,10 @@ try {
         }
     }
     if ($ResourceGroupName) {
-        Write-Host "Scanning resource group(s): $($ResourceGroupName -join ', ')" -ForegroundColor Cyan
+        Write-Verbose "Scanning resource group(s): $($ResourceGroupName -join ', ')"
     }
     else {
-        Write-Host "Scanning ALL resource groups in the subscription." -ForegroundColor Cyan
+        Write-Verbose "Scanning ALL resource groups in the subscription."
     }
     #endregion Resource group scope
 
@@ -449,15 +455,15 @@ try {
         if ($rsProvider -and $rsProvider.RegistrationState -ne 'Registered') {
             $backupAvailable = $false
             $backupProviderMissing = $true
-            Write-Host "Microsoft.RecoveryServices provider is not registered - no VM is protected by Azure Backup; skipping per-VM backup lookup." -ForegroundColor DarkYellow
+            Write-Verbose "Microsoft.RecoveryServices provider is not registered - no VM is protected by Azure Backup; skipping per-VM backup lookup."
         }
     }
-    Write-Host ("Found {0} VM(s). Analyzing..." -f $vms.Count) -ForegroundColor Cyan
+    Write-Verbose ("Found {0} VM(s). Analyzing..." -f $vms.Count)
     #endregion Subscription-level data
 
     #region Parallel per-VM collection (read-only)
     foreach ($location in @($vms | ForEach-Object { $_.Location } | Sort-Object -Unique)) {
-        Write-Host "Reading VM size capabilities for '$location'..." -ForegroundColor DarkGray
+        Write-Verbose "Reading VM size capabilities for '$location'..."
         $null = Get-EahSizeSupport -Location $location -VmSize "none"
     }
 
@@ -753,9 +759,10 @@ New-AzVM -ResourceGroupName "<rg>" -Location "<location>" -VM $vmCfg
             Steps = @([pscustomobject]@{ Title = "Optional: enable encryption at host"; Text = "Deallocate the VM, enable the setting and start it again."; Code = "Stop-AzVM -ResourceGroupName `"<rg>`" -Name `"<vm>`" -Force`n`$vm = Get-AzVM -ResourceGroupName `"<rg>`" -Name `"<vm>`"`nUpdate-AzVM -ResourceGroupName `"<rg>`" -VM `$vm -EncryptionAtHost `$true`nStart-AzVM -ResourceGroupName `"<rg>`" -Name `"<vm>`"" }) }
     }
     #endregion Migration path catalog
-
+
+
     #region Build HTML report
-    Write-Host "Building report..." -ForegroundColor Cyan
+    Write-Verbose "Building report..."
 
     $pathCounts = [ordered]@{}
     foreach ($key in $pathCatalog.Keys) {
@@ -834,7 +841,8 @@ ol.steps>li{margin-bottom:14px}
     Add-Html "<li><a href='#planning'>Planning guidance</a></li>"
     Add-Html "<li><a href='#appendix'>Appendix: analysis details</a></li>"
     Add-Html "</ol></nav>"
-
+
+
     # Executive summary
     Add-Html "<h2 id='summary'>1. Executive summary</h2>"
     Add-Html "<div class='cards'>"
@@ -994,7 +1002,8 @@ ol.steps>li{margin-bottom:14px}
         foreach ($f in $failures) { Add-Html "<tr><td>$(ConvertTo-HtmlText $f.VmName)</td><td>$(ConvertTo-HtmlText $f.ResourceGroup)</td><td class='bad'>$(ConvertTo-HtmlText $f.Error)</td></tr>" }
         Add-Html "</table>"
     }
-
+
+
     # Cleanup
     Add-Html "<h2 id='cleanup'>8. Post-migration cleanup</h2>"
     Add-Html "<p>Do these steps only after each migrated VM has been verified (applications working, encryption at host shown as enabled, backups running).</p>"
@@ -1025,7 +1034,8 @@ ol.steps>li{margin-bottom:14px}
     Add-Html "<li><b>Migrate</b> &mdash; creates new disks, copies the data and builds the new VM with encryption at host. Add <code>-AllowExtensionLoss</code> only if you accept that VM extensions must be reinstalled on the new VM.</li>"
     Add-Html "</ol>"
     Add-Html "<div class='warn'>The automation needs <b>AzCopy</b> on the machine that runs it and <b>Run Command</b> access to the VM. Always test it on the pilot VM first. Linux VMs with an encrypted OS disk, AVD session hosts and VMs on the manual path are not handled by the automation.</div>"
-
+
+
     # Planning
     $pathWaves = @{
         WindowsOsOnly = 2; WindowsOsData = 2; LinuxDataOnly = 2
@@ -1141,22 +1151,10 @@ ol.steps>li{margin-bottom:14px}
         } | Export-Csv -Path $csvFile -NoTypeInformation -Encoding UTF8
     }
 
-    Write-Host ""
-    Write-Host "ADE migration plan summary" -ForegroundColor Cyan
-    Write-Host ("  VMs scanned          : {0}" -f @($vms).Count)
-    Write-Host ("  VMs using ADE        : {0}" -f @($adeResults).Count)
-    foreach ($key in $pathCatalog.Keys) {
-        if ($pathCounts[$key] -gt 0) { Write-Host ("    {0,-34}: {1}" -f $pathCatalog[$key].Name, $pathCounts[$key]) }
-    }
-    Write-Host ("  VMs with blockers    : {0}" -f $blockedCount) -ForegroundColor $(if ($blockedCount -gt 0) { 'Yellow' } else { 'Gray' })
-    Write-Host ("  VMs with warnings    : {0}" -f $warningCount) -ForegroundColor $(if ($warningCount -gt 0) { 'Yellow' } else { 'Gray' })
-    Write-Host ("  Estimated effort     : {0} hour(s)" -f $totalEffort)
-    if ($failures.Count -gt 0) { Write-Host ("  Analysis failures    : {0}" -f $failures.Count) -ForegroundColor Yellow }
-    Write-Host ("  HTML report          : {0}" -f $reportFile) -ForegroundColor Green
-    if ($csvFile) { Write-Host ("  CSV export           : {0}" -f $csvFile) -ForegroundColor Green }
-    Write-Host ""
+Write-Host ("ADE migration plan report: {0}" -f $reportFile) -ForegroundColor Green
+if ($csvFile) { Write-Host ("CSV export: {0}" -f $csvFile) -ForegroundColor Green }
 
-    $results
+if ($PassThru) { $results }
 }
 catch {
     throw "ADE migration analysis failed: $($_.Exception.Message)"
