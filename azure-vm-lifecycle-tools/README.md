@@ -298,9 +298,16 @@ The script reads VMs, power states, managed disks, and VM size capabilities in b
 .\Get-AzAdeMigrationPlan.ps1 -SubscriptionId "00000000-0000-0000-0000-000000000000"
 ```
 
-The report is saved in the current folder as `AdeMigrationPlan-<subscription>-<timestamp>.html`. Each analyzed VM is also written to the pipeline as an object.
+The report is saved in the current folder as `AdeMigrationPlan-<subscriptionName>-<resourceGroup|AllRGs>-<yyyyMMdd-HHmmss>.html` (UTC time). When several resource groups are selected, their names are joined with `_`, or shortened to `<n>RGs` if the name gets too long. Each analyzed VM is also written to the pipeline as an object.
 
-If you don't pass `-ResourceGroupName` or `-AllResourceGroups`, the script lists the subscription's resource groups with their VM counts and asks which to scan. Enter `0` or `A` for all, or enter comma-separated numbers or names. In a non-interactive session, it scans all resource groups.
+If you don't pass `-ResourceGroupName` or `-AllResourceGroups`, the script shows the top 10 resource groups by VM count and asks which to scan. You can:
+
+- Enter one or more numbers, or exact names, separated by commas.
+- Enter `M` to show the next 10 resource groups.
+- Type part of a name to search, then choose from the matches.
+- Enter `A` to scan ALL resource groups.
+
+In a non-interactive session, it scans all resource groups.
 
 Scan every resource group without the prompt:
 

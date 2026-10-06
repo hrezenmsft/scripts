@@ -42,7 +42,7 @@ Analyzes every resource group in the subscription without prompting. Use this fo
 
 .PARAMETER OutputPath
 Path of the HTML report, or an existing directory. When a directory (or nothing) is supplied, the file name
-AdeMigrationPlan-<subscriptionId>-<timestamp>.html is used. The parent directory must already exist.
+AdeMigrationPlan-<subscriptionName>-<resourceGroup|AllRGs>-<yyyyMMdd-HHmmss>.html is used. The parent directory must already exist.
 
 .PARAMETER CsvPath
 Optional path of a CSV file with one row per VM. The parent directory must already exist.
@@ -238,10 +238,6 @@ $results = New-Object System.Collections.Generic.List[object]
 $failures = New-Object System.Collections.Generic.List[object]
 
 try {
-    $reportFile = Resolve-OutputFilePath -Path $OutputPath -DefaultFileName "AdeMigrationPlan-$SubscriptionId-$timestamp.html"
-    $csvFile = $null
-    if ($CsvPath) { $csvFile = Resolve-OutputFilePath -Path $CsvPath -DefaultFileName "AdeMigrationPlan-$SubscriptionId-$timestamp.csv" }
-
     #region Sign-in (reuse existing Azure CLI or Az PowerShell session; never starts an interactive login)
     $loginHint = if ($TenantId) { "az login --tenant $TenantId" } else { "az login" }
     $usedCli = $false
@@ -313,37 +309,77 @@ try {
                 $key = $v.ResourceGroupName.ToLowerInvariant()
                 $vmCountByRg[$key] = 1 + [int]$vmCountByRg[$key]
             }
-            $totalVms = ($vmCountByRg.Values | Measure-Object -Sum).Sum
-            Write-Host ""
-            Write-Host "Select the resource groups to scan:" -ForegroundColor Cyan
-            Write-Host ("  {0,4}  {1}  ({2} VMs)" -f "0", "ALL resource groups", [int]$totalVms) -ForegroundColor Yellow
-            for ($i = 0; $i -lt $allResourceGroups.Count; $i++) {
-                $rgItem = $allResourceGroups[$i]
-                $count = [int]$vmCountByRg[$rgItem.ResourceGroupName.ToLowerInvariant()]
-                Write-Host ("  {0,4}  {1}  ({2} VMs, {3})" -f ($i + 1), $rgItem.ResourceGroupName, $count, $rgItem.Location)
+            $totalVms = [int](($vmCountByRg.Values | Measure-Object -Sum).Sum)
+            $rgCount = { param($rg) [int]$vmCountByRg[$rg.ResourceGroupName.ToLowerInvariant()] }
+            # Resource groups with the most VMs first, so the most relevant ones appear in the first page.
+            $rankedGroups = @($allResourceGroups | Sort-Object -Property @{ Expression = { & $rgCount $_ }; Descending = $true }, ResourceGroupName)
+            $pageSize = 10
+
+            $showList = {
+                param($groups, $title, $offset)
+                $page = @($groups | Select-Object -Skip $offset -First $pageSize)
+                Write-Host ""
+                Write-Host $title -ForegroundColor Cyan
+                Write-Host ("  {0,3}  {1}  ({2} VMs in {3} resource groups)" -f "A", "ALL resource groups", $totalVms, $allResourceGroups.Count) -ForegroundColor Yellow
+                for ($i = 0; $i -lt $page.Count; $i++) {
+                    Write-Host ("  {0,3}  {1}  ({2} VMs, {3})" -f ($i + 1), $page[$i].ResourceGroupName, (& $rgCount $page[$i]), $page[$i].Location)
+                }
+                $remaining = $groups.Count - $offset - $page.Count
+                if ($remaining -gt 0) { Write-Host ("        ... {0} more not shown. Type M for the next {1}, or type a name to search." -f $remaining, $pageSize) -ForegroundColor DarkGray }
+                return , $page
             }
+
+            $listSource = $rankedGroups
+            $listTitle = "Select the resource group to scan (top $pageSize by VM count):"
+            $offset = 0
+            $currentPage = & $showList $listSource $listTitle $offset
             $selection = $null
             while (-not $selection) {
-                $answer = Read-Host "Enter 0 or A for ALL, or one or more numbers/names separated by commas"
+                $answer = Read-Host "Enter A for ALL, a number from the list, or type a resource group name (comma-separate for several)"
                 if ([string]::IsNullOrWhiteSpace($answer)) { continue }
+                $answer = $answer.Trim()
+
+                if ($answer -in @('a', 'all', '*', '0')) { $selection = @('*'); break }
+                if ($answer -ieq 'm') {
+                    $offset += $pageSize
+                    if ($offset -ge $listSource.Count) { $offset = 0 }
+                    $currentPage = & $showList $listSource $listTitle $offset
+                    continue
+                }
+
                 $tokens = @($answer -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
-                if ($tokens | Where-Object { $_ -in @('0', 'a', 'all', '*') }) { $selection = @('*'); break }
                 $picked = @()
                 $invalid = @()
                 foreach ($token in $tokens) {
                     $number = 0
-                    if ([int]::TryParse($token, [ref]$number) -and $number -ge 1 -and $number -le $allResourceGroups.Count) {
-                        $picked += $allResourceGroups[$number - 1].ResourceGroupName
+                    if ([int]::TryParse($token, [ref]$number) -and $number -ge 1 -and $number -le $currentPage.Count) {
+                        $picked += $currentPage[$number - 1].ResourceGroupName
                         continue
                     }
                     $match = $allResourceGroups | Where-Object { $_.ResourceGroupName -ieq $token } | Select-Object -First 1
                     if ($match) { $picked += $match.ResourceGroupName } else { $invalid += $token }
                 }
-                if ($invalid.Count -gt 0) {
-                    Write-Host "Not recognized: $($invalid -join ', '). Try again." -ForegroundColor Red
-                    continue
+
+                if ($invalid.Count -eq 0) { $selection = @($picked | Select-Object -Unique); break }
+
+                # A single unrecognized entry is treated as a search term over all resource group names.
+                if ($tokens.Count -eq 1) {
+                    $term = $tokens[0]
+                    $found = @($rankedGroups | Where-Object { $_.ResourceGroupName -like "*$term*" })
+                    if ($found.Count -eq 1) {
+                        $confirm = Read-Host "Did you mean '$($found[0].ResourceGroupName)'? [Y/n]"
+                        if ($confirm -notmatch '^(n|no)$') { $selection = @($found[0].ResourceGroupName); break }
+                        continue
+                    }
+                    if ($found.Count -gt 1) {
+                        $listSource = $found
+                        $listTitle = "Resource groups matching '$term' ($($found.Count) found):"
+                        $offset = 0
+                        $currentPage = & $showList $listSource $listTitle $offset
+                        continue
+                    }
                 }
-                $selection = @($picked | Select-Object -Unique)
+                Write-Host "Not recognized: $($invalid -join ', '). Try again, type part of a name to search, or A for ALL." -ForegroundColor Red
             }
             if ($selection -ne '*') { $ResourceGroupName = $selection }
         }
@@ -355,6 +391,26 @@ try {
         Write-Host "Scanning ALL resource groups in the subscription." -ForegroundColor Cyan
     }
     #endregion Resource group scope
+
+    $toFileNamePart = {
+        param([string]$Text)
+        $invalidChars = [IO.Path]::GetInvalidFileNameChars()
+        $clean = -join ($Text.ToCharArray() | ForEach-Object { if ($invalidChars -contains $_ -or $_ -eq ' ') { '-' } else { $_ } })
+        ($clean -replace '-{2,}', '-').Trim('-', '.')
+    }
+    $subPart = & $toFileNamePart $subscriptionName
+    if (-not $subPart) { $subPart = $SubscriptionId }
+    if ($ResourceGroupName) {
+        $rgPart = & $toFileNamePart ($ResourceGroupName -join '_')
+        if ($rgPart.Length -gt 60) { $rgPart = "$(@($ResourceGroupName).Count)RGs" }
+    }
+    else {
+        $rgPart = 'AllRGs'
+    }
+    $baseName = "AdeMigrationPlan-$subPart-$rgPart-$timestamp"
+    $reportFile = Resolve-OutputFilePath -Path $OutputPath -DefaultFileName "$baseName.html"
+    $csvFile = $null
+    if ($CsvPath) { $csvFile = Resolve-OutputFilePath -Path $CsvPath -DefaultFileName "$baseName.csv" }
 
     $vms = @()
     $vmStatusById = @{}
