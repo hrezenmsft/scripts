@@ -307,6 +307,8 @@ If you don't pass `-ResourceGroupName` or `-AllResourceGroups`, the script shows
 - Type part of a name to search, then choose from the matches.
 - Enter `A` to scan ALL resource groups.
 
+The picker always appears when no resource group parameter is passed. For automation, pass `-AllResourceGroups` or `-ResourceGroupName` to skip it. If the host can't read input, the script prints a warning and scans ALL resource groups.
+
 In a non-interactive session, it scans all resource groups.
 
 Scan every resource group without the prompt:

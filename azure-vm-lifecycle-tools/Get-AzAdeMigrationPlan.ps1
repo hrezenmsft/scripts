@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
 Analyzes an Azure subscription and builds a migration plan from Azure Disk Encryption (ADE) to encryption at host.
 
@@ -90,7 +90,7 @@ Analyzes a large subscription with 20 VMs processed in parallel and no backup lo
 
 .NOTES
 Author: Henrique Rezende
-Version: 1.4.0
+Version: 1.4.1
 Requires: Az.Accounts, Az.Compute, Az.Resources. Optional: Az.RecoveryServices, Azure CLI.
 Minimum role: Reader on the subscription (Key Vault and Backup data is read through ARM only).
 
@@ -129,6 +129,7 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+Write-Host "Get-AzAdeMigrationPlan v1.4.1" -ForegroundColor Cyan
 
 $requiredCommands = @(
     "Get-AzContext", "Set-AzContext", "Connect-AzAccount",
@@ -294,13 +295,16 @@ try {
         $ResourceGroupName = @($validated | Select-Object -Unique)
     }
     elseif (-not $AllResourceGroups) {
-        $nonInteractive = [Console]::IsInputRedirected -or
-            -not [Environment]::UserInteractive -or
-            ([Environment]::GetCommandLineArgs() | Where-Object { $_ -like '-NonI*' })
-        if ($nonInteractive) {
-            Write-Warning "No -ResourceGroupName supplied and the session is non-interactive; analyzing ALL resource groups."
+        # Console redirection flags are unreliable in hosts such as VS Code, so the picker always tries
+        # to prompt and only falls back to ALL when the host genuinely cannot read input.
+        $readAnswer = {
+            param($prompt)
+            try { $value = Read-Host $prompt }
+            catch { throw [System.OperationCanceledException]::new('NoInteractiveInput') }
+            if ($null -eq $value) { throw [System.OperationCanceledException]::new('NoInteractiveInput') }
+            return $value
         }
-        elseif ($allResourceGroups.Count -eq 0) {
+        if ($allResourceGroups.Count -eq 0) {
             Write-Warning "No resource groups were found in subscription '$subscriptionName'."
         }
         else {
@@ -334,8 +338,9 @@ try {
             $offset = 0
             $currentPage = & $showList $listSource $listTitle $offset
             $selection = $null
+            try {
             while (-not $selection) {
-                $answer = Read-Host "Enter A for ALL, a number from the list, or type a resource group name (comma-separate for several)"
+                $answer = & $readAnswer "Enter A for ALL, a number from the list, or type a resource group name (comma-separate for several)"
                 if ([string]::IsNullOrWhiteSpace($answer)) { continue }
                 $answer = $answer.Trim()
 
@@ -367,7 +372,7 @@ try {
                     $term = $tokens[0]
                     $found = @($rankedGroups | Where-Object { $_.ResourceGroupName -like "*$term*" })
                     if ($found.Count -eq 1) {
-                        $confirm = Read-Host "Did you mean '$($found[0].ResourceGroupName)'? [Y/n]"
+                        $confirm = & $readAnswer "Did you mean '$($found[0].ResourceGroupName)'? [Y/n]"
                         if ($confirm -notmatch '^(n|no)$') { $selection = @($found[0].ResourceGroupName); break }
                         continue
                     }
@@ -380,6 +385,11 @@ try {
                     }
                 }
                 Write-Host "Not recognized: $($invalid -join ', '). Try again, type part of a name to search, or A for ALL." -ForegroundColor Red
+            }
+            }
+            catch [System.OperationCanceledException] {
+                Write-Host "This session cannot read typed input, so ALL resource groups will be scanned. Use -ResourceGroupName <name> or -AllResourceGroups to choose the scope explicitly." -ForegroundColor Yellow
+                $selection = @('*')
             }
             if ($selection -ne '*') { $ResourceGroupName = $selection }
         }
