@@ -300,6 +300,14 @@ The script reads VMs, power states, managed disks, and VM size capabilities in b
 
 The report is saved in the current folder as `AdeMigrationPlan-<subscription>-<timestamp>.html`. Each analyzed VM is also written to the pipeline as an object.
 
+If you don't pass `-ResourceGroupName` or `-AllResourceGroups`, the script lists the subscription's resource groups with their VM counts and asks which to scan. Enter `0` or `A` for all, or enter comma-separated numbers or names. In a non-interactive session, it scans all resource groups.
+
+Scan every resource group without the prompt:
+
+```powershell
+.\Get-AzAdeMigrationPlan.ps1 -SubscriptionId "00000000-0000-0000-0000-000000000000" -AllResourceGroups
+```
+
 Limit the scope and export a CSV:
 
 ```powershell
@@ -315,7 +323,7 @@ Limit the scope and export a CSV:
 List VMs that are blocked:
 
 ```powershell
-.\Get-AzAdeMigrationPlan.ps1 -SubscriptionId "<subscription-id>" |
+.\Get-AzAdeMigrationPlan.ps1 -SubscriptionId "<subscription-id>" -AllResourceGroups |
     Where-Object { -not $_.Supported } |
     Select-Object VmName, ResourceGroup, MigrationPathName, Blockers
 ```
@@ -324,7 +332,8 @@ List VMs that are blocked:
 | --- | --- |
 | `-SubscriptionId` | Required. The subscription to analyze. |
 | `-TenantId` | Optional. Used only in the sign-in hint shown when no session is found. |
-| `-ResourceGroupName` | Optional. Limits the analysis to one or more resource groups. |
+| `-ResourceGroupName` | Optional. Limits the analysis to one or more resource groups. If neither this nor `-AllResourceGroups` is given, you're prompted to pick. |
+| `-AllResourceGroups` | Optional. Scans all resource groups without prompting. Can't be combined with `-ResourceGroupName`. |
 | `-OutputPath` | Optional. HTML file path or existing folder. |
 | `-CsvPath` | Optional. Also exports one CSV row per VM. |
 | `-IncludeNonAdeVms` | Also lists VMs that don't use ADE. |

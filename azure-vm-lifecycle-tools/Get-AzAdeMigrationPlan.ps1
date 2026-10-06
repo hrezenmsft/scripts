@@ -33,7 +33,12 @@ The subscription ID to analyze.
 Optional tenant ID. Used only in the sign-in guidance shown when no valid session is found.
 
 .PARAMETER ResourceGroupName
-Optional list of resource groups to analyze. When omitted, every VM in the subscription is analyzed.
+Optional list of resource groups to analyze. Names are validated against the subscription.
+When neither -ResourceGroupName nor -AllResourceGroups is supplied, the script lists the resource groups
+in the subscription (with their VM counts) and asks you to pick one or more, or ALL.
+
+.PARAMETER AllResourceGroups
+Analyzes every resource group in the subscription without prompting. Use this for unattended runs.
 
 .PARAMETER OutputPath
 Path of the HTML report, or an existing directory. When a directory (or nothing) is supplied, the file name
@@ -59,7 +64,13 @@ lower it if you see Azure Resource Manager throttling (HTTP 429) warnings.
 .EXAMPLE
 .\Get-AzAdeMigrationPlan.ps1 -SubscriptionId 00000000-0000-0000-0000-000000000000
 
-Analyzes the whole subscription and writes the HTML report to the current directory.
+Lists the resource groups in the subscription, asks which ones to scan (or ALL), and writes the HTML report
+to the current directory.
+
+.EXAMPLE
+.\Get-AzAdeMigrationPlan.ps1 -SubscriptionId 00000000-0000-0000-0000-000000000000 -AllResourceGroups
+
+Analyzes the whole subscription without prompting.
 
 .EXAMPLE
 .\Get-AzAdeMigrationPlan.ps1 -SubscriptionId 00000000-0000-0000-0000-000000000000 -ResourceGroupName rg-app1,rg-app2 -OutputPath .\reports -CsvPath .\reports\ade-plan.csv
@@ -67,19 +78,19 @@ Analyzes the whole subscription and writes the HTML report to the current direct
 Analyzes two resource groups and writes both an HTML report and a CSV file.
 
 .EXAMPLE
-$plan = .\Get-AzAdeMigrationPlan.ps1 -SubscriptionId 00000000-0000-0000-0000-000000000000 -SkipBackupCheck
+$plan = .\Get-AzAdeMigrationPlan.ps1 -SubscriptionId 00000000-0000-0000-0000-000000000000 -AllResourceGroups -SkipBackupCheck
 $plan | Where-Object MigrationPath -like 'Windows*' | Format-Table VmName, ResourceGroup, EffortHours
 
 Captures the per-VM objects for further filtering.
 
 .EXAMPLE
-.\Get-AzAdeMigrationPlan.ps1 -SubscriptionId 00000000-0000-0000-0000-000000000000 -ThrottleLimit 20 -SkipBackupCheck
+.\Get-AzAdeMigrationPlan.ps1 -SubscriptionId 00000000-0000-0000-0000-000000000000 -AllResourceGroups -ThrottleLimit 20 -SkipBackupCheck
 
 Analyzes a large subscription with 20 VMs processed in parallel and no backup lookup.
 
 .NOTES
 Author: Henrique Rezende
-Version: 1.1.0
+Version: 1.2.0
 Requires: Az.Accounts, Az.Compute, Az.Resources. Optional: Az.RecoveryServices, Azure CLI.
 Minimum role: Reader on the subscription (Key Vault and Backup data is read through ARM only).
 
@@ -98,6 +109,8 @@ param(
     [string]$TenantId,
 
     [string[]]$ResourceGroupName,
+
+    [switch]$AllResourceGroups,
 
     [string]$OutputPath,
 
@@ -120,8 +133,11 @@ $ErrorActionPreference = "Stop"
 $requiredCommands = @(
     "Get-AzContext", "Set-AzContext", "Connect-AzAccount",
     "Get-AzVM", "Get-AzVMExtension", "Get-AzVMDiskEncryptionStatus", "Get-AzDisk",
-    "Get-AzComputeResourceSku", "Get-AzProviderFeature"
+    "Get-AzComputeResourceSku", "Get-AzProviderFeature", "Get-AzResourceGroup"
 )
+if ($ResourceGroupName -and $AllResourceGroups) {
+    throw "Use either -ResourceGroupName or -AllResourceGroups, not both."
+}
 foreach ($command in $requiredCommands) {
     if (-not (Get-Command -Name $command -ErrorAction SilentlyContinue)) {
         throw "Required command '$command' was not found. Install the Az PowerShell modules (Install-Module Az -Scope CurrentUser)."
@@ -266,6 +282,79 @@ try {
         $featureState = [string]$feature.RegistrationState
     }
     catch { Write-Warning "Could not read the EncryptionAtHost feature state: $($_.Exception.Message)" }
+
+    #region Resource group scope
+    $allResourceGroups = @(Get-AzResourceGroup -ErrorAction Stop | Sort-Object -Property ResourceGroupName)
+    if ($ResourceGroupName) {
+        $validated = @()
+        $unknown = @()
+        foreach ($rgName in $ResourceGroupName) {
+            $match = $allResourceGroups | Where-Object { $_.ResourceGroupName -ieq $rgName } | Select-Object -First 1
+            if ($match) { $validated += $match.ResourceGroupName } else { $unknown += $rgName }
+        }
+        if ($unknown.Count -gt 0) {
+            throw "Resource group(s) not found in subscription '$subscriptionName': $($unknown -join ', ')."
+        }
+        $ResourceGroupName = @($validated | Select-Object -Unique)
+    }
+    elseif (-not $AllResourceGroups) {
+        $nonInteractive = [Console]::IsInputRedirected -or
+            -not [Environment]::UserInteractive -or
+            ([Environment]::GetCommandLineArgs() | Where-Object { $_ -like '-NonI*' })
+        if ($nonInteractive) {
+            Write-Warning "No -ResourceGroupName supplied and the session is non-interactive; analyzing ALL resource groups."
+        }
+        elseif ($allResourceGroups.Count -eq 0) {
+            Write-Warning "No resource groups were found in subscription '$subscriptionName'."
+        }
+        else {
+            $vmCountByRg = @{}
+            foreach ($v in @(Get-AzVM -ErrorAction Stop)) {
+                $key = $v.ResourceGroupName.ToLowerInvariant()
+                $vmCountByRg[$key] = 1 + [int]$vmCountByRg[$key]
+            }
+            $totalVms = ($vmCountByRg.Values | Measure-Object -Sum).Sum
+            Write-Host ""
+            Write-Host "Select the resource groups to scan:" -ForegroundColor Cyan
+            Write-Host ("  {0,4}  {1}  ({2} VMs)" -f "0", "ALL resource groups", [int]$totalVms) -ForegroundColor Yellow
+            for ($i = 0; $i -lt $allResourceGroups.Count; $i++) {
+                $rgItem = $allResourceGroups[$i]
+                $count = [int]$vmCountByRg[$rgItem.ResourceGroupName.ToLowerInvariant()]
+                Write-Host ("  {0,4}  {1}  ({2} VMs, {3})" -f ($i + 1), $rgItem.ResourceGroupName, $count, $rgItem.Location)
+            }
+            $selection = $null
+            while (-not $selection) {
+                $answer = Read-Host "Enter 0 or A for ALL, or one or more numbers/names separated by commas"
+                if ([string]::IsNullOrWhiteSpace($answer)) { continue }
+                $tokens = @($answer -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+                if ($tokens | Where-Object { $_ -in @('0', 'a', 'all', '*') }) { $selection = @('*'); break }
+                $picked = @()
+                $invalid = @()
+                foreach ($token in $tokens) {
+                    $number = 0
+                    if ([int]::TryParse($token, [ref]$number) -and $number -ge 1 -and $number -le $allResourceGroups.Count) {
+                        $picked += $allResourceGroups[$number - 1].ResourceGroupName
+                        continue
+                    }
+                    $match = $allResourceGroups | Where-Object { $_.ResourceGroupName -ieq $token } | Select-Object -First 1
+                    if ($match) { $picked += $match.ResourceGroupName } else { $invalid += $token }
+                }
+                if ($invalid.Count -gt 0) {
+                    Write-Host "Not recognized: $($invalid -join ', '). Try again." -ForegroundColor Red
+                    continue
+                }
+                $selection = @($picked | Select-Object -Unique)
+            }
+            if ($selection -ne '*') { $ResourceGroupName = $selection }
+        }
+    }
+    if ($ResourceGroupName) {
+        Write-Host "Scanning resource group(s): $($ResourceGroupName -join ', ')" -ForegroundColor Cyan
+    }
+    else {
+        Write-Host "Scanning ALL resource groups in the subscription." -ForegroundColor Cyan
+    }
+    #endregion Resource group scope
 
     $vms = @()
     $vmStatusById = @{}
