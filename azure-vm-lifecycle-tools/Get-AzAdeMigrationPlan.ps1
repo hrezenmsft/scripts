@@ -1154,7 +1154,9 @@ ol.steps>li{margin-bottom:14px}
 Write-Host ("ADE migration plan report: {0}" -f $reportFile) -ForegroundColor Green
 if ($csvFile) { Write-Host ("CSV export: {0}" -f $csvFile) -ForegroundColor Green }
 
-if ($PassThru) { $results }
+if ($PassThru) {
+    $results
+}
 }
 catch {
     throw "ADE migration analysis failed: $($_.Exception.Message)"
