@@ -41,7 +41,7 @@ Inventories VMs across all resource groups in the active subscription.
 
 .NOTES
 Author: Henrique Rezende
-Version: 1.0.0
+Version: 1.0.1
 #>
 
 [CmdletBinding()]
