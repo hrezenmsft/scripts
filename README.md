@@ -36,7 +36,7 @@ Use a `fix:`, `feat:`, or breaking-change commit whenever a PowerShell script ch
 
 ## Disclaimer
 
-The sample scripts are not supported under any Microsoft standard support program or service. They are provided AS IS without warranty of any kind. The entire risk arising from their use or performance remains with you.
+These sample scripts are not supported under any Microsoft standard support program or service. They are provided "AS IS", without warranties or conditions of any kind, either express or implied, including warranties of merchantability, fitness for a particular purpose, and non-infringement. You assume all risks associated with their use, execution, and performance. You are responsible for reviewing and testing the scripts and validating their suitability for your environment before use.
 
 ## License
 

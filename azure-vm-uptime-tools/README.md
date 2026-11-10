@@ -2,7 +2,7 @@
 
 ## Disclaimer
 
-The sample scripts are not supported under any Microsoft standard support program or service. The sample scripts are provided AS IS without warranty of any kind. Microsoft further disclaims all implied warranties including, without limitation, any implied warranties of merchantability or of fitness for a particular purpose. The entire risk arising out of the use or performance of the scripts and documentation remains with you. In no event shall Microsoft, its authors, or anyone else involved in the creation, production, or delivery of the scripts be liable for any damages whatsoever arising out of the use of or inability to use the scripts or documentation.
+These sample scripts are not supported under any Microsoft standard support program or service. They are provided "AS IS", without warranties or conditions of any kind, either express or implied, including warranties of merchantability, fitness for a particular purpose, and non-infringement. You assume all risks associated with their use, execution, and performance. You are responsible for reviewing and testing the scripts and validating their suitability for your environment before use.
 
 PowerShell tools for estimating Azure VM uptime from successful start and deallocate Activity Log events, VM creation time, and current power state. All report timestamps are UTC.
 

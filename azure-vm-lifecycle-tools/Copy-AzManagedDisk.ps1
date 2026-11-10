@@ -81,6 +81,12 @@ reusing the SKU of any existing incremental snapshots.
 Shows the operations that would run without changing any resource.
 
 .NOTES
+Disclaimer: This sample script is not supported under any Microsoft standard support program or service.
+It is provided "AS IS", without warranties or conditions of any kind, either express or implied,
+including warranties of merchantability, fitness for a particular purpose, and non-infringement.
+You assume all risks associated with its use, execution, and performance. You are responsible for
+reviewing and testing the script and validating its suitability for your environment before use.
+
 Author: Henrique Rezende
 Version: 1.0.1
 
